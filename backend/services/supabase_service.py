@@ -7,9 +7,13 @@ from supabase import create_client, Client
 
 logger = logging.getLogger("supabase_service")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+DEFAULT_SUPABASE_URL = "https://mykmvgdrzvcoydpliwhr.supabase.co"
+DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15a212Z2RyenZjb3lkcGxpd2hyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNTkxMTEsImV4cCI6MjEwNzYzNTExMX0.pHOXwng1vC6y_BhvLRYprftXl4QxRw3_xitZrkadOv0"
+DEFAULT_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15a212Z2RyenZjb3lkcGxpd2hyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA1OTExMSwiZXhwIjoyMTA3NjM1MTExfQ.HZffIBf6JIVK791deiMGj1HNGZO259GoaMYeoC1OtgI"
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip() or DEFAULT_SUPABASE_URL
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip() or DEFAULT_SUPABASE_KEY
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or DEFAULT_SERVICE_KEY
 
 # Fallback to SUPABASE_KEY if service role key not provided
 SERVICE_KEY = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY
