@@ -51,7 +51,45 @@ export async function loginUser({ email, password }) {
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Invalid email or password.');
+    const err = new Error(errorData.detail || 'Invalid email or password.');
+    err.status = response.status;
+    err.requiresVerification = response.status === 403;
+    err.email = email;
+    throw err;
+  }
+
+  return await response.json();
+}
+
+export async function verifyEmail({ email, otp }) {
+  const response = await fetch(`${API_BASE_URL}/auth/verify-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, otp }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const err = new Error(errorData.detail || 'Verification failed. Please check your code.');
+    err.status = response.status;
+    throw err;
+  }
+
+  return await response.json();
+}
+
+export async function resendVerification({ email }) {
+  const response = await fetch(`${API_BASE_URL}/auth/resend-verification`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const err = new Error(errorData.detail || 'Failed to resend verification code.');
+    err.status = response.status;
+    throw err;
   }
 
   return await response.json();

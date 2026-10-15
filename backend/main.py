@@ -1,5 +1,7 @@
 import os
+import re
 import logging
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,11 +16,21 @@ from schemas.resume_schema import (
     UserProfileResponse,
     UserProfileUpdate,
     AuthResponse,
+    RegisterResponse,
+    VerifyEmailRequest,
+    ResendVerificationRequest,
+    ResendVerificationResponse,
     AnalysisHistoryItem,
     AnalysisDetailResponse
 )
 from services.pdf_parser import extract_resume_text, PDFParsingError
 from services.resume_analyzer import analyze_resume_with_gemini
+from services.email_service import (
+    generate_secure_otp,
+    hash_otp,
+    verify_otp_hash,
+    send_verification_email
+)
 from services.supabase_service import (
     get_supabase_client,
     get_admin_client,
@@ -27,7 +39,12 @@ from services.supabase_service import (
     get_user_analyses,
     get_analysis_by_id,
     delete_analysis_by_id,
-    check_supabase_connection
+    check_supabase_connection,
+    save_otp_record,
+    get_active_otp_record,
+    increment_otp_attempt,
+    mark_otp_consumed,
+    mark_user_email_verified
 )
 
 logger = logging.getLogger("main")
@@ -48,6 +65,7 @@ app.add_middleware(
 )
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 
 
 @app.get("/api/health")
@@ -64,13 +82,13 @@ def health_check():
 
 
 # ==============================================================================
-# Authentication Endpoints (Supabase Auth Integration)
+# Authentication Endpoints (Supabase Auth & OTP Email Verification)
 # ==============================================================================
 
-@app.post("/api/auth/register", response_model=AuthResponse)
+@app.post("/api/auth/register", response_model=RegisterResponse)
 def register_user(body: UserRegisterRequest):
     """
-    Registers a new user in Supabase Auth.
+    Registers a new user account with unverified status and issues a 6-digit OTP to their email.
     """
     clean_name = body.full_name.strip()
     clean_email = body.email.strip().lower()
@@ -81,10 +99,10 @@ def register_user(body: UserRegisterRequest):
             detail="Full name is required."
         )
 
-    if not clean_email or "@" not in clean_email:
+    if not clean_email or not EMAIL_REGEX.match(clean_email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A valid email address is required."
+            detail="Please provide a valid email address (e.g. user@example.com)."
         )
 
     if len(body.password) < 6:
@@ -94,67 +112,254 @@ def register_user(body: UserRegisterRequest):
         )
 
     admin_client = get_admin_client()
-    user_id = None
+    existing_user = None
+
     try:
-        # Create user via Supabase Admin API with email_confirm: True so email rate limits never block the user
-        admin_res = admin_client.auth.admin.create_user({
-            "email": clean_email,
-            "password": body.password,
-            "email_confirm": True,
-            "user_metadata": {
-                "full_name": clean_name
-            }
-        })
-        user_id = str(admin_res.user.id)
-    except Exception as e:
-        err_msg = str(e)
-        if "already" in err_msg.lower() or "exists" in err_msg.lower():
-            # If user already registered, ensure email is confirmed and password updated
-            try:
-                users = admin_client.auth.admin.list_users()
-                existing = next((u for u in users if u.email == clean_email), None)
-                if existing:
-                    admin_client.auth.admin.update_user_by_id(
-                        str(existing.id),
-                        {
-                            "email_confirm": True,
-                            "password": body.password,
-                            "user_metadata": {"full_name": clean_name}
-                        }
-                    )
-                    user_id = str(existing.id)
-            except Exception as upd_err:
-                logger.warning(f"Error updating existing user: {upd_err}")
-        else:
+        users = admin_client.auth.admin.list_users()
+        existing_user = next((u for u in users if u.email == clean_email), None)
+    except Exception as list_err:
+        logger.warning(f"Error checking existing users: {list_err}")
+
+    if existing_user:
+        # Check if user is already verified
+        is_already_verified = bool(getattr(existing_user, "confirmed_at", None))
+        meta = getattr(existing_user, "user_metadata", {}) or {}
+        if is_already_verified or meta.get("email_verified") is True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An account with this email address already exists. Please sign in."
+            )
+        # Existing unverified user: update password and metadata
+        try:
+            admin_client.auth.admin.update_user_by_id(
+                str(existing_user.id),
+                {
+                    "password": body.password,
+                    "user_metadata": {
+                        "full_name": clean_name,
+                        "email_verified": False
+                    }
+                }
+            )
+        except Exception as upd_err:
+            logger.error(f"Error updating unverified user: {upd_err}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unable to process registration: {str(upd_err)}"
+            )
+    else:
+        # Create new unverified user in Supabase
+        try:
+            admin_client.auth.admin.create_user({
+                "email": clean_email,
+                "password": body.password,
+                "email_confirm": False,
+                "user_metadata": {
+                    "full_name": clean_name,
+                    "email_verified": False
+                }
+            })
+        except Exception as e:
+            err_msg = str(e)
             logger.error(f"Supabase user creation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=err_msg
             )
 
-    # Immediately authenticate to obtain session token
-    auth_client = get_supabase_client()
-    token = ""
+    # Generate 6-digit cryptographic OTP
+    otp = generate_secure_otp(6)
+    otp_hash = hash_otp(clean_email, otp, "email_verification")
+
+    # Save hashed OTP in database with 10-minute expiry
+    save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
+
+    # Dispatch verification email
+    send_verification_email(clean_email, otp, clean_name)
+
+    return RegisterResponse(
+        message="A 6-digit verification code has been sent to your email.",
+        email=clean_email,
+        requires_verification=True,
+        cooldown_seconds=60
+    )
+
+
+@app.post("/api/auth/verify-email", response_model=AuthResponse)
+def verify_email(body: VerifyEmailRequest):
+    """
+    Verifies the user's email with the 6-digit OTP code, marks account verified, and issues an active session token.
+    """
+    clean_email = body.email.strip().lower()
+    clean_otp = body.otp.strip()
+
+    if not clean_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email address is required."
+        )
+
+    if not clean_otp or len(clean_otp) != 6 or not clean_otp.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code must be exactly 6 digits."
+        )
+
+    # Retrieve active OTP record
+    otp_record = get_active_otp_record(clean_email, "email_verification")
+    if not otp_record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active verification code found or code has expired. Please request a new code."
+        )
+
+    record_id = otp_record.get("id")
+    current_attempts = otp_record.get("attempts", 0)
+    max_attempts = otp_record.get("max_attempts", 5)
+
+    if current_attempts >= max_attempts:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Maximum verification attempts exceeded. Please request a new code."
+        )
+
+    # Validate OTP hash
+    stored_hash = otp_record.get("otp_hash", "")
+    is_valid = verify_otp_hash(clean_email, clean_otp, stored_hash, "email_verification")
+
+    if not is_valid:
+        new_attempts = increment_otp_attempt(record_id, clean_email, "email_verification")
+        remaining = max(0, max_attempts - new_attempts)
+        if remaining == 0:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Invalid code. Maximum attempts reached. Please request a new verification code."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid verification code. {remaining} attempt{'s' if remaining != 1 else ''} remaining."
+        )
+
+    # Valid OTP: Consume record
+    mark_otp_consumed(record_id, clean_email, "email_verification")
+
+    # Mark user verified in Supabase Auth & profiles
+    admin_client = get_admin_client()
+    user_id = None
+    full_name = clean_email.split("@")[0]
     try:
-        login_res = auth_client.auth.sign_in_with_password({
-            "email": clean_email,
-            "password": body.password
-        })
-        if login_res.session:
-            token = login_res.session.access_token
-    except Exception as login_err:
-        logger.warning(f"Post-registration login notice: {login_err}")
+        users = admin_client.auth.admin.list_users()
+        user_obj = next((u for u in users if u.email == clean_email), None)
+        if user_obj:
+            user_id = str(user_obj.id)
+            meta = getattr(user_obj, "user_metadata", {}) or {}
+            full_name = meta.get("full_name") or meta.get("name") or full_name
+            # Confirm user
+            admin_client.auth.admin.update_user_by_id(
+                user_id,
+                {
+                    "email_confirm": True,
+                    "user_metadata": {**meta, "email_verified": True}
+                }
+            )
+            mark_user_email_verified(user_id, clean_email)
+    except Exception as e:
+        logger.error(f"Error marking user verified: {e}")
+
+    # Generate authenticated session token
+    access_token = ""
+    try:
+        link_res = admin_client.auth.admin.generate_link({"type": "magiclink", "email": clean_email})
+        hashed_token = link_res.properties.hashed_token
+        auth_client = get_supabase_client()
+        auth_res = auth_client.auth.verify_otp({"token_hash": hashed_token, "type": "magiclink"})
+        if auth_res.session:
+            access_token = auth_res.session.access_token
+    except Exception as token_err:
+        logger.warning(f"Session generation warning: {token_err}")
 
     return AuthResponse(
         user=UserProfileResponse(
             id=user_id or "",
             email=clean_email,
-            full_name=clean_name,
+            full_name=full_name,
             email_verified=True,
             created_at=None
         ),
-        access_token=token,
+        access_token=access_token,
         token_type="bearer"
+    )
+
+
+@app.post("/api/auth/resend-verification", response_model=ResendVerificationResponse)
+def resend_verification(body: ResendVerificationRequest):
+    """
+    Issues and sends a fresh 6-digit OTP code to the user's email with a 60-second cooldown rate limit.
+    """
+    clean_email = body.email.strip().lower()
+
+    if not clean_email or not EMAIL_REGEX.match(clean_email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A valid email address is required."
+        )
+
+    admin_client = get_admin_client()
+    user_name = "Job Seeker"
+    try:
+        users = admin_client.auth.admin.list_users()
+        user_obj = next((u for u in users if u.email == clean_email), None)
+        if not user_obj:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account registered with this email address."
+            )
+
+        meta = getattr(user_obj, "user_metadata", {}) or {}
+        user_name = meta.get("full_name") or user_name
+        is_already_verified = bool(getattr(user_obj, "confirmed_at", None)) or meta.get("email_verified") is True
+        if is_already_verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Your email is already verified. You can log in directly."
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Error checking user for resend: {e}")
+
+    # Check cooldown against previous record
+    active_record = get_active_otp_record(clean_email, "email_verification")
+    if active_record and active_record.get("last_sent_at"):
+        last_sent = active_record["last_sent_at"]
+        if isinstance(last_sent, str):
+            try:
+                last_dt = datetime.fromisoformat(last_sent.replace("Z", "+00:00"))
+            except Exception:
+                last_dt = None
+        else:
+            last_dt = last_sent
+
+        if last_dt:
+            elapsed = (datetime.now(timezone.utc) - last_dt.astimezone(timezone.utc)).total_seconds()
+            if elapsed < 60:
+                wait_sec = int(60 - elapsed)
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Please wait {wait_sec} second{'s' if wait_sec != 1 else ''} before requesting another code."
+                )
+
+    # Generate new OTP
+    otp = generate_secure_otp(6)
+    otp_hash = hash_otp(clean_email, otp, "email_verification")
+    save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
+
+    # Dispatch email
+    send_verification_email(clean_email, otp, user_name)
+
+    return ResendVerificationResponse(
+        message="A new 6-digit verification code has been sent to your email.",
+        cooldown_seconds=60
     )
 
 
@@ -162,11 +367,26 @@ def register_user(body: UserRegisterRequest):
 def login_user(body: UserLoginRequest):
     """
     Authenticates a user via Supabase Auth with email and password.
-    Automatically confirms email if it was previously unconfirmed.
+    Blocks unverified accounts with HTTP 403 Forbidden.
     """
     clean_email = body.email.strip().lower()
-    client = get_supabase_client()
 
+    if not clean_email or not body.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email and password are required."
+        )
+
+    admin_client = get_admin_client()
+    user_obj = None
+    try:
+        users = admin_client.auth.admin.list_users()
+        user_obj = next((u for u in users if u.email == clean_email), None)
+    except Exception as err:
+        logger.warning(f"User check warning in login: {err}")
+
+    # Attempt sign-in with client
+    client = get_supabase_client()
     auth_res = None
     try:
         auth_res = client.auth.sign_in_with_password({
@@ -174,33 +394,31 @@ def login_user(body: UserLoginRequest):
             "password": body.password
         })
     except Exception as e:
-        err_msg = str(e)
-        # If email not confirmed, auto-confirm it using admin client and retry!
-        if "confirm" in err_msg.lower() or "verif" in err_msg.lower():
-            try:
-                admin_client = get_admin_client()
-                users = admin_client.auth.admin.list_users()
-                existing = next((u for u in users if u.email == clean_email), None)
-                if existing:
-                    admin_client.auth.admin.update_user_by_id(str(existing.id), {"email_confirm": True})
-                    auth_res = client.auth.sign_in_with_password({
-                        "email": clean_email,
-                        "password": body.password
-                    })
-            except Exception as auto_conf_err:
-                logger.warning(f"Auto-confirm failed: {auto_conf_err}")
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid email or password.",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-        else:
-            logger.warning(f"Supabase login failed for {clean_email}: {e}")
+        err_msg = str(e).lower()
+        logger.warning(f"Login attempt failed for {clean_email}: {e}")
+
+        # Check if failure is due to unconfirmed email
+        if "confirm" in err_msg or "verif" in err_msg:
+            # Generate and send fresh OTP so user can verify immediately
+            otp = generate_secure_otp(6)
+            otp_hash = hash_otp(clean_email, otp, "email_verification")
+            save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
+            user_name = ""
+            if user_obj:
+                meta = getattr(user_obj, "user_metadata", {}) or {}
+                user_name = meta.get("full_name") or ""
+            send_verification_email(clean_email, otp, user_name)
+
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password.",
-                headers={"WWW-Authenticate": "Bearer"},
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Email verification required. A new verification code has been sent to your email."
             )
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if not auth_res.user or not auth_res.session:
         raise HTTPException(
@@ -208,7 +426,23 @@ def login_user(body: UserLoginRequest):
             detail="Authentication failed. Please verify your credentials."
         )
 
+    # Check verified status
     meta = getattr(auth_res.user, "user_metadata", {}) or {}
+    is_verified = bool(getattr(auth_res.user, "confirmed_at", None)) or bool(meta.get("email_verified", False))
+
+    if not is_verified:
+        # Generate and dispatch fresh OTP
+        otp = generate_secure_otp(6)
+        otp_hash = hash_otp(clean_email, otp, "email_verification")
+        save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
+        full_name = meta.get("full_name") or clean_email.split("@")[0]
+        send_verification_email(clean_email, otp, full_name)
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required. A new verification code has been sent to your email."
+        )
+
     full_name = meta.get("full_name") or meta.get("name") or clean_email.split("@")[0]
 
     return AuthResponse(
@@ -216,7 +450,7 @@ def login_user(body: UserLoginRequest):
             id=str(auth_res.user.id),
             email=auth_res.user.email or clean_email,
             full_name=full_name,
-            email_verified=bool(auth_res.user.confirmed_at),
+            email_verified=True,
             created_at=str(auth_res.user.created_at) if hasattr(auth_res.user, "created_at") else None
         ),
         access_token=auth_res.session.access_token,

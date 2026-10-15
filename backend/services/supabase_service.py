@@ -1,5 +1,6 @@
 import os
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -78,10 +79,20 @@ async def get_current_user(
 
         u = user_response.user
         meta = getattr(u, "user_metadata", {}) or {}
+
+        # Enforce email verification check for protected endpoints
+        is_verified = bool(getattr(u, "confirmed_at", None)) or bool(meta.get("email_verified", False))
+        if not is_verified:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Email verification required. Please verify your email before accessing this service.",
+            )
+
         return {
             "id": str(u.id),
             "email": u.email,
             "full_name": meta.get("full_name") or meta.get("name") or (u.email.split("@")[0] if u.email else "User"),
+            "email_verified": is_verified,
             "user_metadata": meta,
         }
     except HTTPException:
@@ -221,3 +232,150 @@ def check_supabase_connection() -> Dict[str, Any]:
             return {"status": "connected", "provider": "Supabase Cloud"}
         return {"status": "error", "error": err, "provider": "Supabase Cloud"}
     return {"status": "connected", "provider": "Supabase Cloud"}
+
+
+# ==============================================================================
+# Email Verification OTP Management
+# ==============================================================================
+
+_in_memory_otp_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def save_otp_record(
+    email: str,
+    otp_hash: str,
+    purpose: str = "email_verification",
+    expires_in_seconds: int = 600,
+    expires_in_minutes: Optional[int] = None,
+    max_attempts: int = 5,
+) -> Dict[str, Any]:
+    """
+    Saves or updates an OTP verification record in Supabase email_verifications table,
+    with an in-memory cache for resilience.
+    """
+    clean_email = email.lower().strip()
+    now = datetime.now(timezone.utc)
+    sec = (expires_in_minutes * 60) if expires_in_minutes is not None else expires_in_seconds
+    expires_at = now + timedelta(seconds=sec)
+
+    record = {
+        "email": clean_email,
+        "otp_hash": otp_hash,
+        "purpose": purpose,
+        "attempts": 0,
+        "max_attempts": max_attempts,
+        "expires_at": expires_at.isoformat(),
+        "consumed": False,
+        "created_at": now.isoformat(),
+        "last_sent_at": now.isoformat(),
+    }
+
+    # Cache in memory
+    _in_memory_otp_cache[f"{clean_email}:{purpose}"] = dict(record)
+
+    # Persist in Supabase table
+    try:
+        admin_client = get_admin_client()
+        # Invalidate previous unconsumed records for this email and purpose
+        admin_client.table("email_verifications").update({"consumed": True}).eq("email", clean_email).eq("purpose", purpose).eq("consumed", False).execute()
+        res = admin_client.table("email_verifications").insert(record).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        logger.warning(f"Notice: Supabase email_verifications insert notice: {e}. In-memory fallback active.")
+
+    return record
+
+
+def get_active_otp_record(email: str, purpose: str = "email_verification") -> Optional[Dict[str, Any]]:
+    """
+    Retrieves the current active (unconsumed) OTP record for this email and purpose.
+    """
+    clean_email = email.lower().strip()
+
+    # 1. Try Supabase table
+    try:
+        admin_client = get_admin_client()
+        res = (
+            admin_client.table("email_verifications")
+            .select("*")
+            .eq("email", clean_email)
+            .eq("purpose", purpose)
+            .eq("consumed", False)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+    except Exception as e:
+        logger.debug(f"Querying email_verifications table notice: {e}")
+
+    # 2. Check local memory cache
+    cached = _in_memory_otp_cache.get(f"{clean_email}:{purpose}")
+    if cached and not cached.get("consumed", False):
+        return cached
+
+    return None
+
+
+def increment_otp_attempt(record_id: Optional[str], email: str, purpose: str = "email_verification") -> int:
+    """
+    Increments the failed verification attempt count.
+    """
+    clean_email = email.lower().strip()
+    key = f"{clean_email}:{purpose}"
+    if key in _in_memory_otp_cache:
+        _in_memory_otp_cache[key]["attempts"] = _in_memory_otp_cache[key].get("attempts", 0) + 1
+        new_attempts = _in_memory_otp_cache[key]["attempts"]
+    else:
+        new_attempts = 1
+
+    if record_id:
+        try:
+            admin_client = get_admin_client()
+            admin_client.table("email_verifications").update({"attempts": new_attempts}).eq("id", record_id).execute()
+        except Exception as e:
+            logger.debug(f"Updating attempts in Supabase notice: {e}")
+
+    return new_attempts
+
+
+def mark_otp_consumed(record_id: Optional[str], email: str, purpose: str = "email_verification") -> None:
+    """
+    Marks the OTP record as consumed to prevent replay attacks.
+    """
+    clean_email = email.lower().strip()
+    key = f"{clean_email}:{purpose}"
+    if key in _in_memory_otp_cache:
+        _in_memory_otp_cache[key]["consumed"] = True
+
+    if record_id:
+        try:
+            admin_client = get_admin_client()
+            admin_client.table("email_verifications").update({"consumed": True}).eq("id", record_id).execute()
+        except Exception as e:
+            logger.debug(f"Marking OTP consumed in Supabase notice: {e}")
+
+
+def mark_user_email_verified(user_id: str, email: str) -> None:
+    """
+    Marks the user account as verified across Supabase Auth and public profiles.
+    """
+    clean_email = email.lower().strip()
+    admin_client = get_admin_client()
+    try:
+        admin_client.auth.admin.update_user_by_id(
+            user_id,
+            {
+                "email_confirm": True,
+                "user_metadata": {"email_verified": True}
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error marking user {user_id} email confirmed in Auth: {e}")
+
+    try:
+        admin_client.table("profiles").update({"email_verified": True}).eq("id", user_id).execute()
+    except Exception as e:
+        logger.debug(f"Profiles update notice: {e}")

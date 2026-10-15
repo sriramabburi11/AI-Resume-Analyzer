@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
+import { registerUser, loginUser, verifyEmail, resendVerification } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -7,7 +8,8 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [authView, setAuthView] = useState('login'); // 'login' | 'register' | 'forgot_password' | 'reset_password'
+  const [authView, setAuthView] = useState('login'); // 'login' | 'register' | 'verify_otp' | 'forgot_password' | 'reset_password'
+  const [pendingEmail, setPendingEmail] = useState('');
   const [resetToken, setResetToken] = useState(null);
 
   // Helper to format user object
@@ -78,73 +80,80 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signUp = async ({ email, password, fullName }) => {
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
     const cleanName = fullName.trim();
 
-    // 1. Call backend to create pre-confirmed user via Supabase Admin API (bypasses email cooldown and verification blocks)
-    const resp = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        full_name: cleanName,
-        email: cleanEmail,
-        password,
-      }),
-    });
-
-    if (!resp.ok) {
-      const errJson = await resp.json().catch(() => ({}));
-      throw new Error(errJson.detail || 'Registration failed.');
-    }
-
-    // 2. Immediately sign in on client SDK to activate session and navigate to Home Page
-    const { data: clientAuth, error: clientErr } = await supabase.auth.signInWithPassword({
+    const res = await registerUser({
+      fullName: cleanName,
       email: cleanEmail,
       password,
     });
 
-    if (clientErr) {
-      throw clientErr;
-    }
-
-    if (clientAuth?.session) {
-      setSession(clientAuth.session);
-      setUser(formatUser(clientAuth.session.user));
-    }
-
-    return clientAuth;
+    setPendingEmail(cleanEmail);
+    setAuthView('verify_otp');
+    return res;
   };
 
   const signIn = async ({ email, password }) => {
-    const cleanEmail = email.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
-    // 1. Ensure account is confirmed on backend in case it was created unconfirmed
     try {
-      await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, password }),
-      });
-    } catch (e) {
-      console.warn('Backend login notice:', e);
+      const res = await loginUser({ email: cleanEmail, password });
+      if (res?.access_token) {
+        const userObj = {
+          id: res.user.id,
+          email: res.user.email,
+          full_name: res.user.full_name,
+          email_verified: true,
+          user_metadata: { full_name: res.user.full_name, email_verified: true },
+        };
+        setSession({ access_token: res.access_token, user: userObj });
+        setUser(userObj);
+
+        // Sync with Supabase client SDK in background
+        try {
+          await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+        } catch (syncErr) {
+          // Local bearer token is already active
+        }
+      }
+      return res;
+    } catch (err) {
+      if (err.requiresVerification || err.status === 403) {
+        setPendingEmail(cleanEmail);
+        setAuthView('verify_otp');
+      }
+      throw err;
+    }
+  };
+
+  const verifyOtp = async ({ email, otp }) => {
+    const targetEmail = (email || pendingEmail).trim().toLowerCase();
+    const res = await verifyEmail({ email: targetEmail, otp: otp.trim() });
+
+    if (res?.access_token) {
+      const userObj = {
+        id: res.user.id,
+        email: res.user.email,
+        full_name: res.user.full_name,
+        email_verified: true,
+        user_metadata: { full_name: res.user.full_name, email_verified: true },
+      };
+      setSession({ access_token: res.access_token, user: userObj });
+      setUser(userObj);
+      setPendingEmail('');
+      setAuthView('login');
     }
 
-    // 2. Sign in via client SDK to establish reactive session
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: cleanEmail,
-      password,
-    });
+    return res;
+  };
 
-    if (error) {
-      throw error;
+  const resendOtp = async (emailOverride) => {
+    const targetEmail = (emailOverride || pendingEmail).trim().toLowerCase();
+    if (!targetEmail) {
+      throw new Error('No email address specified for verification.');
     }
-
-    if (data?.session) {
-      setSession(data.session);
-      setUser(formatUser(data.session.user));
-    }
-
-    return data;
+    return await resendVerification({ email: targetEmail });
   };
 
   const signOut = async () => {
@@ -155,6 +164,7 @@ export function AuthProvider({ children }) {
     }
     setSession(null);
     setUser(null);
+    setPendingEmail('');
     setAuthView('login');
   };
 
@@ -208,10 +218,14 @@ export function AuthProvider({ children }) {
     loading,
     authView,
     setAuthView,
+    pendingEmail,
+    setPendingEmail,
     resetToken,
     setResetToken,
     signUp,
     signIn,
+    verifyOtp,
+    resendOtp,
     signOut,
     requestPasswordReset,
     updatePassword: handleUpdatePassword,

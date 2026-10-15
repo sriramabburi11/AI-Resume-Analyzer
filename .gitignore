@@ -33,3 +33,8 @@ Thumbs.db
 *.sqlite3
 resume_analyzer.db
 *.backup
+
+# Scratch / dev artifacts
+scratch/
+backend/scratch/
+

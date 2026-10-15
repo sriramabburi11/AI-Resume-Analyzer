@@ -100,6 +100,23 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
+class RegisterResponse(BaseModel):
+    message: str
+    email: str
+    requires_verification: bool = True
+    cooldown_seconds: int = 60
+
+class VerifyEmailRequest(BaseModel):
+    email: str
+    otp: str
+
+class ResendVerificationRequest(BaseModel):
+    email: str
+
+class ResendVerificationResponse(BaseModel):
+    message: str
+    cooldown_seconds: int = 60
+
 class AnalysisHistoryItem(BaseModel):
     id: str
     resume_name: Optional[str] = None
