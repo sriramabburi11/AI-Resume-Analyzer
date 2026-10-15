@@ -175,13 +175,18 @@ def register_user(body: UserRegisterRequest):
     save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
 
     # Dispatch verification email
-    send_verification_email(clean_email, otp, clean_name)
+    dispatch = send_verification_email(clean_email, otp, clean_name)
+    delivered = bool(dispatch.get("delivered"))
+    msg = "A 6-digit verification code has been sent to your email." if delivered else "Verification code generated."
 
     return RegisterResponse(
-        message="A 6-digit verification code has been sent to your email.",
+        message=msg,
         email=clean_email,
         requires_verification=True,
-        cooldown_seconds=60
+        cooldown_seconds=60,
+        delivery_mode="live" if delivered else "sandbox",
+        delivery_notice=dispatch.get("notice"),
+        preview_otp=dispatch.get("preview_otp")
     )
 
 
@@ -355,11 +360,16 @@ def resend_verification(body: ResendVerificationRequest):
     save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
 
     # Dispatch email
-    send_verification_email(clean_email, otp, user_name)
+    dispatch = send_verification_email(clean_email, otp, user_name)
+    delivered = bool(dispatch.get("delivered"))
+    msg = "A new 6-digit verification code has been sent to your email." if delivered else "A new verification code has been generated."
 
     return ResendVerificationResponse(
-        message="A new 6-digit verification code has been sent to your email.",
-        cooldown_seconds=60
+        message=msg,
+        cooldown_seconds=60,
+        delivery_mode="live" if delivered else "sandbox",
+        delivery_notice=dispatch.get("notice"),
+        preview_otp=dispatch.get("preview_otp")
     )
 
 

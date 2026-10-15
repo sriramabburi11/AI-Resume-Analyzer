@@ -50,6 +50,8 @@ export default function AuthPage() {
   const [cooldownSeconds, setCooldownSeconds] = useState(60);
   const [expirySeconds, setExpirySeconds] = useState(600); // 10 minutes
   const [isResending, setIsResending] = useState(false);
+  const [previewOtp, setPreviewOtp] = useState('');
+  const [deliveryNotice, setDeliveryNotice] = useState('');
   const otpInputsRef = useRef([]);
 
   // Status states
@@ -67,7 +69,21 @@ export default function AuthPage() {
     setPassword('');
     setConfirmPassword('');
     setOtpDigits(['', '', '', '', '', '']);
+    setPreviewOtp('');
+    setDeliveryNotice('');
     setAuthView(newView);
+  };
+
+  const handleAutoFillOtp = (codeToFill) => {
+    const code = (codeToFill || previewOtp || '').slice(0, 6);
+    const newDigits = ['', '', '', '', '', ''];
+    for (let i = 0; i < code.length; i++) {
+      newDigits[i] = code[i];
+    }
+    setOtpDigits(newDigits);
+    setTimeout(() => {
+      otpInputsRef.current[5]?.focus();
+    }, 50);
   };
 
   // Cooldown and Expiry timers for OTP view
@@ -154,6 +170,12 @@ export default function AuthPage() {
     const targetEmail = pendingEmail || email;
     try {
       const res = await resendOtp(targetEmail);
+      if (res?.preview_otp) {
+        setPreviewOtp(res.preview_otp);
+      }
+      if (res?.delivery_notice) {
+        setDeliveryNotice(res.delivery_notice);
+      }
       setSuccessMessage(res.message || 'A new 6-digit verification code has been sent to your email.');
       setCooldownSeconds(60);
       setExpirySeconds(600);
@@ -226,6 +248,13 @@ export default function AuthPage() {
           password,
           fullName: fullName.trim(),
         });
+
+        if (res?.preview_otp) {
+          setPreviewOtp(res.preview_otp);
+        }
+        if (res?.delivery_notice) {
+          setDeliveryNotice(res.delivery_notice);
+        }
 
         setSuccessMessage(
           res?.message || 'Verification code sent! Check your email inbox for your 6-digit code.'
@@ -431,6 +460,36 @@ export default function AuthPage() {
             {/* ============================================================== */}
             {authView === 'verify_otp' && (
               <div className="space-y-4">
+                {/* Sandbox / Instant Code Banner if present */}
+                {previewOtp && (
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-xl p-3.5 space-y-2 fade-in">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
+                        <Sparkles className="w-4 h-4 text-blue-600" />
+                        <span>Sandbox Test Code</span>
+                      </div>
+                      <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold">
+                        Instant Delivery
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      {deliveryNotice || "Resend sandbox delivers directly to abburimohan2125@gmail.com without a verified custom domain. Your 6-digit test code is:"}
+                    </p>
+                    <div className="flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-blue-200/70 shadow-xs">
+                      <span className="text-xl font-mono font-extrabold tracking-widest text-blue-700">
+                        {previewOtp}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleAutoFillOtp(previewOtp)}
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-md text-xs cursor-pointer transition shadow-xs active:scale-95"
+                      >
+                        Auto-Fill Code
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-xs font-semibold text-slate-700">

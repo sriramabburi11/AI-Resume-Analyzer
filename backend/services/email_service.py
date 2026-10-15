@@ -116,45 +116,96 @@ def build_verification_html(otp: str, full_name: Optional[str] = None) -> str:
 </html>"""
 
 
-def send_verification_email(email: str, otp: str, full_name: Optional[str] = None) -> bool:
+def send_verification_email(email: str, otp: str, full_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Dispatches the 6-digit OTP to the user's email address.
-    Supports SMTP delivery, Resend API, and safe dev fallback mode.
-    Never exposes credentials or plain OTPs in logs.
+    Supports Resend API, SMTP delivery, and resilient sandbox fallback.
+    Returns delivery status dictionary with provider details and preview code when in sandbox mode.
     """
+    from dotenv import load_dotenv
+    load_dotenv(override=False)
+
     clean_email = email.lower().strip()
     html_content = build_verification_html(otp, full_name)
     plain_content = f"Your AI Resume Analyzer verification code is: {otp}. This code expires in 10 minutes."
     subject = f"{otp} is your AI Resume Analyzer verification code"
 
+    api_key = os.getenv("RESEND_API_KEY", "").strip() or RESEND_API_KEY
+    from_email = os.getenv("RESEND_FROM_EMAIL", "").strip() or RESEND_FROM_EMAIL
+
     # 1. Try Resend API if configured
-    if RESEND_API_KEY:
+    if api_key:
         try:
             res = requests.post(
                 "https://api.resend.com/emails",
                 headers={
-                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json={
-                    "from": f"{SMTP_FROM_NAME} <{RESEND_FROM_EMAIL}>",
+                    "from": f"{SMTP_FROM_NAME} <{from_email}>",
                     "to": [clean_email],
                     "subject": subject,
                     "html": html_content,
                     "text": plain_content,
                 },
-                timeout=10,
+                timeout=8,
             )
             if res.status_code in (200, 201):
                 logger.info(f"Verification email delivered via Resend to {clean_email}")
-                return True
+                return {
+                    "delivered": True,
+                    "provider": "resend",
+                    "notice": f"Verification code delivered to {clean_email}",
+                    "preview_otp": None
+                }
             else:
-                logger.warning(f"Resend delivery failed with status {res.status_code}: {res.text}")
+                err_text = res.text
+                logger.warning(f"Resend delivery response ({res.status_code}): {err_text}")
+                # Resend free sandbox limitation: only delivers to the Resend account owner's email
+                is_sandbox_restricted = res.status_code == 403 or "only send testing emails" in err_text.lower()
+                
+                # If recipient was restricted by sandbox, attempt to notify owner account if different
+                owner_email = "abburimohan2125@gmail.com"
+                if is_sandbox_restricted and clean_email != owner_email:
+                    try:
+                        requests.post(
+                            "https://api.resend.com/emails",
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json",
+                            },
+                            json={
+                                "from": f"{SMTP_FROM_NAME} <{from_email}>",
+                                "to": [owner_email],
+                                "subject": f"Verification Code for {clean_email}: {otp}",
+                                "html": f"<p>A verification code was requested for <strong>{clean_email}</strong>:<br><h2 style='font-size:28px;color:#2563eb;'>{otp}</h2></p>",
+                            },
+                            timeout=5,
+                        )
+                    except Exception:
+                        pass
+
+                return {
+                    "delivered": False,
+                    "provider": "resend_sandbox",
+                    "notice": "Resend sandbox delivery active (only delivers directly to abburimohan2125@gmail.com without verified custom domain). Verification code is provided below for testing.",
+                    "preview_otp": otp
+                }
         except Exception as e:
-            logger.error(f"Resend connection error: {e}")
+            logger.warning(f"Resend API gateway unreachable ({type(e).__name__}): {e}")
+            return {
+                "delivered": False,
+                "provider": "resend_timeout",
+                "notice": "Resend gateway network unreachable. Verification code is provided below for instant testing.",
+                "preview_otp": otp
+            }
 
     # 2. Try Standard SMTP if host and credentials configured
-    if SMTP_HOST and SMTP_USER and SMTP_PASSWORD:
+    smtp_host = os.getenv("SMTP_HOST", "").strip() or SMTP_HOST
+    smtp_user = os.getenv("SMTP_USER", "").strip() or SMTP_USER
+    smtp_pwd = os.getenv("SMTP_PASSWORD", "").strip() or SMTP_PASSWORD
+    if smtp_host and smtp_user and smtp_pwd:
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
@@ -165,32 +216,31 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
             msg.attach(MIMEText(html_content, "html"))
 
             if SMTP_PORT == 465:
-                # SSL
-                server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=12)
+                server = smtplib.SMTP_SSL(smtp_host, SMTP_PORT, timeout=10)
             else:
-                server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=12)
+                server = smtplib.SMTP(smtp_host, SMTP_PORT, timeout=10)
                 if SMTP_USE_TLS:
                     server.starttls()
 
-            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.login(smtp_user, smtp_pwd)
             server.sendmail(SMTP_FROM_EMAIL, [clean_email], msg.as_string())
             server.quit()
             logger.info(f"Verification email delivered via SMTP to {clean_email}")
-            return True
+            return {
+                "delivered": True,
+                "provider": "smtp",
+                "notice": f"Verification email sent via SMTP to {clean_email}",
+                "preview_otp": None
+            }
         except Exception as e:
             logger.error(f"SMTP delivery error for {clean_email}: {e}")
 
-    # 3. Development / Safe Local Fallback:
-    # If live SMTP credentials are not yet configured in local environment, log the dispatch
-    # and write to a developer scratch record for automated testing without exposing to user logs.
-    logger.info(f"Email service dispatched verification code to {clean_email} (dev delivery channel active)")
-    try:
-        scratch_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scratch")
-        os.makedirs(scratch_dir, exist_ok=True)
-        import json
-        with open(os.path.join(scratch_dir, "last_dev_otp.json"), "w") as f:
-            json.dump({"email": clean_email, "otp": otp}, f)
-    except Exception:
-        pass
+    # 3. Development / Safe Sandbox Fallback
+    logger.info(f"Email service dispatched verification code to {clean_email} (sandbox fallback active)")
+    return {
+        "delivered": False,
+        "provider": "sandbox",
+        "notice": "Sandbox mode active. Your 6-digit verification code is provided below.",
+        "preview_otp": otp
+    }
 
-    return True

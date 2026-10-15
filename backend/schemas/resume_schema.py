@@ -105,6 +105,9 @@ class RegisterResponse(BaseModel):
     email: str
     requires_verification: bool = True
     cooldown_seconds: int = 60
+    delivery_mode: Optional[str] = "live"
+    delivery_notice: Optional[str] = None
+    preview_otp: Optional[str] = None
 
 class VerifyEmailRequest(BaseModel):
     email: str
@@ -116,6 +119,9 @@ class ResendVerificationRequest(BaseModel):
 class ResendVerificationResponse(BaseModel):
     message: str
     cooldown_seconds: int = 60
+    delivery_mode: Optional[str] = "live"
+    delivery_notice: Optional[str] = None
+    preview_otp: Optional[str] = None
 
 class AnalysisHistoryItem(BaseModel):
     id: str
