@@ -96,11 +96,17 @@ export default function AuthPage() {
       if (authView === 'login') {
         await signIn({ email: email.trim(), password });
       } else if (authView === 'register') {
-        await signUp({
+        const res = await signUp({
           email: email.trim(),
           password,
           fullName: fullName.trim(),
         });
+
+        if (res?.needsEmailConfirmation) {
+          setSuccessMessage(
+            res.message || 'Account created! Please check your email inbox to confirm your email and sign in.'
+          );
+        }
       } else if (authView === 'forgot_password') {
         if (!email.trim()) {
           setErrorMessage('Please enter the email associated with your account.');
@@ -123,10 +129,24 @@ export default function AuthPage() {
     } catch (err) {
       console.error('Authentication error:', err);
       let msg = err.message || 'An error occurred during authentication.';
-      if (msg.toLowerCase().includes('invalid email or password')) {
+      const lower = msg.toLowerCase();
+      if (lower.includes('security purposes') || lower.includes('rate limit')) {
+        // Attempt immediate sign-in if rate limit triggered on pre-existing account
+        try {
+          await signIn({ email: email.trim(), password });
+          return;
+        } catch (signInErr) {
+          msg = 'An account with this email already exists. Please click "Sign In" below with your password.';
+        }
+      } else if (lower.includes('invalid email or password') || lower.includes('invalid login credentials')) {
         msg = 'Invalid email or password. Please verify your credentials and try again.';
-      } else if (msg.toLowerCase().includes('already exists')) {
-        msg = 'An account with this email address already exists. Please sign in instead.';
+      } else if (lower.includes('already registered') || lower.includes('already exists')) {
+        try {
+          await signIn({ email: email.trim(), password });
+          return;
+        } catch (signInErr) {
+          msg = 'An account with this email address already exists. Please click "Sign in" below.';
+        }
       }
       setErrorMessage(msg);
     } finally {

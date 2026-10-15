@@ -93,40 +93,63 @@ def register_user(body: UserRegisterRequest):
         )
 
     client = get_supabase_client()
+    user_id = None
     try:
-        auth_res = client.auth.sign_up({
+        # Create user via Supabase Admin API with email_confirm: True so email rate limits never block the user
+        admin_res = client.auth.admin.create_user({
             "email": clean_email,
             "password": body.password,
-            "options": {
-                "data": {
-                    "full_name": clean_name
-                }
+            "email_confirm": True,
+            "user_metadata": {
+                "full_name": clean_name
             }
         })
+        user_id = str(admin_res.user.id)
     except Exception as e:
-        logger.error(f"Supabase registration error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        err_msg = str(e)
+        if "already" in err_msg.lower() or "exists" in err_msg.lower():
+            # If user already registered, ensure email is confirmed and password updated
+            try:
+                users = client.auth.admin.list_users()
+                existing = next((u for u in users if u.email == clean_email), None)
+                if existing:
+                    client.auth.admin.update_user_by_id(
+                        str(existing.id),
+                        {
+                            "email_confirm": True,
+                            "password": body.password,
+                            "user_metadata": {"full_name": clean_name}
+                        }
+                    )
+                    user_id = str(existing.id)
+            except Exception as upd_err:
+                logger.warning(f"Error updating existing user: {upd_err}")
+        else:
+            logger.error(f"Supabase user creation error: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg
+            )
 
-    if not auth_res.user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Registration failed. Please check your details."
-        )
-
+    # Immediately authenticate to obtain session token
     token = ""
-    if auth_res.session:
-        token = auth_res.session.access_token
+    try:
+        login_res = client.auth.sign_in_with_password({
+            "email": clean_email,
+            "password": body.password
+        })
+        if login_res.session:
+            token = login_res.session.access_token
+    except Exception as login_err:
+        logger.warning(f"Post-registration login notice: {login_err}")
 
     return AuthResponse(
         user=UserProfileResponse(
-            id=str(auth_res.user.id),
-            email=auth_res.user.email or clean_email,
+            id=user_id or "",
+            email=clean_email,
             full_name=clean_name,
-            email_verified=bool(auth_res.user.confirmed_at),
-            created_at=str(auth_res.user.created_at) if hasattr(auth_res.user, "created_at") else None
+            email_verified=True,
+            created_at=None
         ),
         access_token=token,
         token_type="bearer"
