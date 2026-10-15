@@ -1,6 +1,6 @@
 # AI Resume Analyzer & ATS Optimizer
 
-An end-to-end web application that allows users to upload a PDF resume and receive automated structure analysis, ATS compatibility scoring, exact line-by-line recommendations, suitable job role recommendations, keyword categorization, and optional job description matching.
+An end-to-end web application that allows users to upload a PDF resume and receive automated structure analysis, ATS compatibility scoring, exact line-by-line recommendations, suitable job role recommendations, keyword categorization, and optional job description matching — powered by **Supabase Database & Authentication** and **Google Gemini AI**.
 
 ---
 
@@ -8,14 +8,14 @@ An end-to-end web application that allows users to upload a PDF resume and recei
 
 1. **PDF Resume Upload**: Drag-and-drop or click to upload PDF resumes (validated format & size limit).
 2. **PDF Text & Layout Extraction**: In-memory text extraction and structural feature auditing via PyMuPDF.
-3. **Resume Structure Analysis**: Section completeness check (Contact, Summary, Skills, Experience, Projects, Education, etc.) with non-standard section title recommendations (e.g. recommending *"Technical Skills"* over *"Technical Arsenal"*).
+3. **Resume Structure Analysis**: Section completeness check (Contact, Summary, Skills, Experience, Projects, Education, etc.) with non-standard section title recommendations.
 4. **Estimated ATS Compatibility**: Diagnostic checks for multi-column layouts, graphics/images, border tables, contact details, date formatting, and decorative symbols.
 5. **Exact Improvements**: Structured recommendations enforcing the format:
    `CURRENT` → `PROBLEM` → `RECOMMENDED CHANGE` → `REASON` → `PRIORITY`
 6. **Role Recommendation Engine**: Recommends 4-6 target software roles with match percentages, matching skills, missing skills, and evidence.
 7. **Optional Job Description Matching**: Match score calculation, matched vs. missing skill identification, and targeted resume tailoring suggestions without fake keyword stuffing.
 8. **Categorized Keyword Analysis**: Categorizes extracted keywords into Languages, Frameworks, Databases, Tools, Cloud, and Engineering Concepts.
-9. **Resume Quality Scores**: Overall score calculated from weighted Structure, ATS, and Content quality metrics.
+9. **User Authentication & History**: Integrated with **Supabase Auth** (Sign-up, Sign-in, Password Reset) and **Supabase Database** with Row Level Security (RLS) for private analysis history tracking.
 10. **Modern SaaS Dashboard**: Interactive tabbed navigation, score gauges, progress bars, and clean responsive layout.
 
 ---
@@ -23,48 +23,35 @@ An end-to-end web application that allows users to upload a PDF resume and recei
 ## 🏗️ Architecture & Technology Stack
 
 ```text
-React (Vite + Tailwind CSS)
+React (Vite + Tailwind CSS + @supabase/supabase-js)
+       │
+       ├── Supabase Auth (Sign up / Sign in / Session persistence)
        │
        ▼ (REST API / JSON & multipart form-data)
 FastAPI Backend (Python 3.13)
        │
-       ├── PostgreSQL (SQLAlchemy 2.x + psycopg3 + Alembic migrations)
-       ├── Argon2id Password Hashing & JWT Authentication
-       ├── PyMuPDF (PDF Text & Layout Heuristics)
+       ├── Supabase Cloud Database (PostgreSQL + Row Level Security)
+       ├── PyMuPDF (In-Memory PDF Text & Layout Heuristics)
        ├── ATS & Structure Rules Engine
        └── Gemini API (google-genai SDK) / Intelligent Heuristic Fallback
 ```
 
-* **Frontend**: React, Vite, Tailwind CSS, Lucide Icons.
-* **Backend**: FastAPI, SQLAlchemy 2.x, psycopg3, Alembic, Argon2id (`argon2-cffi`), PyJWT, PyMuPDF, Pydantic v2.
-* **Database**: PostgreSQL (self-managed or Dockerized via `docker-compose.yml`).
-* **Privacy**: Uploaded resumes are processed in-memory; raw files are never stored.
+* **Frontend**: React, Vite, Tailwind CSS, `@supabase/supabase-js`, Lucide Icons.
+* **Backend**: FastAPI, `supabase` Python SDK, PyMuPDF, Pydantic v2, Python-dotenv.
+* **Database & Auth**: Supabase Cloud PostgreSQL with Row Level Security (RLS) policies.
+* **Privacy**: Uploaded resumes are processed strictly in-memory; raw PDF files are never stored on disk.
 
 ---
 
 ## 🚀 Quick Start Instructions
 
-### 1. Database Setup (PostgreSQL)
+### 1. Supabase Database Schema Setup
 
-You can run PostgreSQL locally using Docker or connect to any PostgreSQL instance:
-
-```bash
-# Start PostgreSQL 16 container via Docker Compose
-docker compose up -d
-```
-
-Configure `backend/.env`:
-```env
-DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@localhost:5432/resume_analyzer
-JWT_SECRET_KEY=your_secure_jwt_secret_key_here
-GEMINI_API_KEY=your_gemini_api_key_here
-```
-
-Run database migrations:
-```bash
-cd backend
-alembic upgrade head
-```
+1. Open your [Supabase Project Dashboard](https://supabase.com/dashboard).
+2. Navigate to the **SQL Editor** tab.
+3. Open and run the migration script:
+   [`supabase/migrations/20261015000000_create_resume_analyzer_schema.sql`](supabase/migrations/20261015000000_create_resume_analyzer_schema.sql).
+4. This script creates the `profiles` and `resume_analyses` tables, triggers, performance indexes, and configures Row Level Security (RLS) policies.
 
 ---
 
@@ -86,26 +73,23 @@ alembic upgrade head
    pip install -r requirements.txt
    ```
 
-4. Configure environment variables:
-   Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-   Add your Gemini API Key in `.env`:
+4. Configure environment variables in `backend/.env`:
    ```env
-   GEMINI_API_KEY=your_actual_gemini_api_key_here
+   GEMINI_API_KEY=your_gemini_api_key_here
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_KEY=your_supabase_anon_key
+   SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
    ```
-   *(Note: If `GEMINI_API_KEY` is not provided, the application will automatically fall back to an intelligent heuristic mock engine so you can test the UI out of the box).*
 
 5. Start the FastAPI backend server:
    ```bash
    uvicorn main:app --reload --port 8000
    ```
-   The backend API will run at `http://127.0.0.1:8000`.
+   The backend API will run at `http://127.0.0.1:8000`. API docs are available at `http://127.0.0.1:8000/docs`.
 
 ---
 
-### 2. Frontend Setup
+### 3. Frontend Setup
 
 1. Open a new terminal and navigate to `frontend`:
    ```bash
@@ -117,7 +101,13 @@ alembic upgrade head
    npm install
    ```
 
-3. Start the Vite development server:
+3. Configure environment variables in `frontend/.env`:
+   ```env
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
+
+4. Start the Vite development server:
    ```bash
    npm run dev
    ```
@@ -127,8 +117,9 @@ alembic upgrade head
 
 ## 🧪 Testing Backend Integration
 
-Run the built-in test suite to verify text extraction, section audit, and API response schema formatting:
+Run the built-in test suite to verify Supabase connectivity, route security, and the resume analysis engine:
 ```bash
+./backend/venv/bin/python backend/test_supabase_integration.py
 ./backend/venv/bin/python backend/test_resume_analyzer.py
 ```
 
@@ -136,5 +127,6 @@ Run the built-in test suite to verify text extraction, section audit, and API re
 
 ## 🔒 Privacy & Security
 
-* **No Storage**: Uploaded files are processed strictly in memory and are discarded immediately after response generation.
-* **Key Protection**: Gemini API key is stored exclusively in the backend `.env` file and is never exposed to the client.
+* **In-Memory Processing**: Uploaded PDF files are read and processed entirely in memory and discarded immediately after response generation.
+* **Row Level Security (RLS)**: User resume history is isolated via Supabase RLS so users can only access their own analysis records.
+* **Role Separation**: Client application uses the anonymous publishable key, while privileged database operations use the server-only service-role key.

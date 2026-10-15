@@ -95,7 +95,7 @@ export default function ProfileModal({ isOpen, onClose }) {
                 className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 cursor-not-allowed"
               />
             </div>
-            <p className="text-[11px] text-slate-400 mt-1">Managed securely through PostgreSQL Authentication.</p>
+            <p className="text-[11px] text-slate-400 mt-1">Managed securely through Supabase Authentication.</p>
           </div>
 
           {/* Full Name */}

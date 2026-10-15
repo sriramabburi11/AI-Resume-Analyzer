@@ -112,7 +112,7 @@ function MainApp() {
           <p>© {new Date().getFullYear()} AI Resume Analyzer & ATS Optimizer. Built for High-Impact Technical Applications.</p>
           <div className="flex items-center gap-1.5 text-slate-400">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>PostgreSQL Database & Secure Auth</span>
+            <span>Supabase Database & Auth</span>
           </div>
         </div>
       </footer>

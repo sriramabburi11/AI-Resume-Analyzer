@@ -386,7 +386,7 @@ export default function AuthPage() {
           <div className="pt-2 border-t border-slate-100 text-center">
             <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              <span>In-memory resume processing • Secure PostgreSQL Authentication</span>
+              <span>In-memory resume processing • Secure Supabase Authentication</span>
             </div>
           </div>
         </div>

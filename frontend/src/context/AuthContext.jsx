@@ -1,122 +1,180 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import {
-  registerUser,
-  loginUser,
-  logoutUser,
-  fetchCurrentUser,
-  forgotPassword,
-  resetPassword,
-  updateProfile
-} from '../services/api';
+import { supabase } from '../services/supabaseClient';
 
 const AuthContext = createContext(null);
-const TOKEN_KEY = 'resume_pulse_auth_token';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
+  const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [authView, setAuthView] = useState('login'); // 'login' | 'register' | 'forgot_password' | 'reset_password'
   const [resetToken, setResetToken] = useState(null);
 
-  // Check URL parameters for password reset tokens on initial load
-  useEffect(() => {
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlToken = urlParams.get('token') || urlParams.get('reset_token');
-      if (urlToken) {
-        setResetToken(urlToken);
-        setAuthView('reset_password');
-      }
-    } catch (e) {
-      console.warn('URL token parse error:', e);
-    }
-  }, []);
+  // Helper to format user object
+  const formatUser = (supabaseUser) => {
+    if (!supabaseUser) return null;
+    const meta = supabaseUser.user_metadata || {};
+    return {
+      id: supabaseUser.id,
+      email: supabaseUser.email,
+      full_name: meta.full_name || meta.name || (supabaseUser.email ? supabaseUser.email.split('@')[0] : 'User'),
+      user_metadata: meta,
+      created_at: supabaseUser.created_at,
+    };
+  };
 
-  // Verify and load user session on mount or token change
   useEffect(() => {
-    const initAuth = async () => {
-      const storedToken = localStorage.getItem(TOKEN_KEY);
-      if (!storedToken) {
-        setUser(null);
-        setToken(null);
-        setLoading(false);
-        return;
-      }
-
+    // 1. Initial session load
+    const initSession = async () => {
       try {
-        const userData = await fetchCurrentUser(storedToken);
-        setUser(userData);
-        setToken(storedToken);
+        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.warn('Supabase getSession error:', error.message);
+        }
+        if (initialSession) {
+          setSession(initialSession);
+          setUser(formatUser(initialSession.user));
+        }
       } catch (err) {
-        console.warn('Session verification failed, clearing stale token:', err.message);
-        localStorage.removeItem(TOKEN_KEY);
-        setUser(null);
-        setToken(null);
+        console.error('Error initializing Supabase session:', err);
       } finally {
         setLoading(false);
       }
     };
 
-    initAuth();
+    initSession();
+
+    // 2. Listen to Supabase auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (newSession) {
+        setSession(newSession);
+        setUser(formatUser(newSession.user));
+      } else {
+        setSession(null);
+        setUser(null);
+      }
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setAuthView('reset_password');
+      }
+
+      setLoading(false);
+    });
+
+    // Check URL parameters for password reset flow
+    try {
+      const hash = window.location.hash;
+      const search = window.location.search;
+      if (hash.includes('type=recovery') || search.includes('type=recovery')) {
+        setAuthView('reset_password');
+      }
+    } catch (e) {
+      // safe fallback
+    }
+
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
   const signUp = async ({ email, password, fullName }) => {
-    const authData = await registerUser({
-      fullName,
-      email,
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
       password,
+      options: {
+        data: {
+          full_name: fullName.trim(),
+        },
+      },
     });
 
-    const jwtToken = authData.access_token;
-    localStorage.setItem(TOKEN_KEY, jwtToken);
-    setToken(jwtToken);
-    setUser(authData.user);
-    return { user: authData.user, token: jwtToken };
+    if (error) {
+      throw error;
+    }
+
+    if (data?.session) {
+      setSession(data.session);
+      setUser(formatUser(data.session.user));
+    }
+
+    return data;
   };
 
   const signIn = async ({ email, password }) => {
-    const authData = await loginUser({ email, password });
-    const jwtToken = authData.access_token;
-    localStorage.setItem(TOKEN_KEY, jwtToken);
-    setToken(jwtToken);
-    setUser(authData.user);
-    return { user: authData.user, token: jwtToken };
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (data?.session) {
+      setSession(data.session);
+      setUser(formatUser(data.session.user));
+    }
+
+    return data;
   };
 
   const signOut = async () => {
-    await logoutUser();
-    localStorage.removeItem(TOKEN_KEY);
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn('Supabase signOut notice:', err);
+    }
+    setSession(null);
     setUser(null);
-    setToken(null);
     setAuthView('login');
   };
 
   const requestPasswordReset = async (email) => {
-    return await forgotPassword(email);
+    const { data, error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/`,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    return { message: 'Password reset link sent to your email.' };
   };
 
   const handleUpdatePassword = async (newPassword) => {
-    if (!resetToken) {
-      throw new Error('Missing password reset token. Please use the link provided in your reset instructions.');
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) {
+      throw error;
     }
-    const res = await resetPassword({ token: resetToken, newPassword });
-    setResetToken(null);
+
     setAuthView('login');
-    return res;
+    return { message: 'Password updated successfully!' };
   };
 
   const updateProfileName = async (fullName) => {
-    if (!token) return;
-    const updated = await updateProfile(fullName, token);
-    setUser(prev => ({ ...prev, full_name: updated.full_name }));
-    return updated;
+    const { data, error } = await supabase.auth.updateUser({
+      data: {
+        full_name: fullName.trim(),
+      },
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    if (data?.user) {
+      setUser(formatUser(data.user));
+    }
+    return data;
   };
 
   const value = {
     user,
-    token,
-    session: token ? { access_token: token } : null,
+    token: session?.access_token || null,
+    session,
     profile: user,
     loading,
     authView,
@@ -130,10 +188,8 @@ export function AuthProvider({ children }) {
     updatePassword: handleUpdatePassword,
     updateProfileName,
     refreshProfile: async () => {
-      if (token) {
-        const u = await fetchCurrentUser(token);
-        setUser(u);
-      }
+      const { data: { user: u } } = await supabase.auth.getUser();
+      if (u) setUser(formatUser(u));
     },
   };
 

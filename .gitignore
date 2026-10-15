@@ -32,3 +32,4 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 resume_analyzer.db
+*.backup
