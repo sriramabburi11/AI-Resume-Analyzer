@@ -80,19 +80,11 @@ async def get_current_user(
         u = user_response.user
         meta = getattr(u, "user_metadata", {}) or {}
 
-        # Enforce email verification check for protected endpoints
-        is_verified = bool(getattr(u, "confirmed_at", None)) or bool(meta.get("email_verified", False))
-        if not is_verified:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Email verification required. Please verify your email before accessing this service.",
-            )
-
         return {
             "id": str(u.id),
             "email": u.email,
             "full_name": meta.get("full_name") or meta.get("name") or (u.email.split("@")[0] if u.email else "User"),
-            "email_verified": is_verified,
+            "email_verified": True,
             "user_metadata": meta,
         }
     except HTTPException:

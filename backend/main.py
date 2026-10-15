@@ -85,10 +85,11 @@ def health_check():
 # Authentication Endpoints (Supabase Auth & OTP Email Verification)
 # ==============================================================================
 
-@app.post("/api/auth/register", response_model=RegisterResponse)
+@app.post("/api/auth/register", response_model=AuthResponse)
 def register_user(body: UserRegisterRequest):
     """
-    Registers a new user account with unverified status and issues a 6-digit OTP to their email.
+    Registers a new user account with pre-confirmed status and returns an active session token.
+    No email verification step required.
     """
     clean_name = body.full_name.strip()
     clean_email = body.email.strip().lower()
@@ -112,81 +113,89 @@ def register_user(body: UserRegisterRequest):
         )
 
     admin_client = get_admin_client()
-    existing_user = None
-
+    user_id = None
     try:
-        users = admin_client.auth.admin.list_users()
-        existing_user = next((u for u in users if u.email == clean_email), None)
-    except Exception as list_err:
-        logger.warning(f"Error checking existing users: {list_err}")
-
-    if existing_user:
-        # Check if user is already verified
-        is_already_verified = bool(getattr(existing_user, "confirmed_at", None))
-        meta = getattr(existing_user, "user_metadata", {}) or {}
-        if is_already_verified or meta.get("email_verified") is True:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="An account with this email address already exists. Please sign in."
-            )
-        # Existing unverified user: update password and metadata
-        try:
-            admin_client.auth.admin.update_user_by_id(
-                str(existing_user.id),
-                {
-                    "password": body.password,
-                    "user_metadata": {
-                        "full_name": clean_name,
-                        "email_verified": False
-                    }
-                }
-            )
-        except Exception as upd_err:
-            logger.error(f"Error updating unverified user: {upd_err}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unable to process registration: {str(upd_err)}"
-            )
-    else:
-        # Create new unverified user in Supabase
-        try:
-            admin_client.auth.admin.create_user({
-                "email": clean_email,
-                "password": body.password,
-                "email_confirm": False,
-                "user_metadata": {
-                    "full_name": clean_name,
-                    "email_verified": False
-                }
-            })
-        except Exception as e:
-            err_msg = str(e)
+        # Create user via Supabase Admin API with email_confirm: True so user is active immediately
+        admin_res = admin_client.auth.admin.create_user({
+            "email": clean_email,
+            "password": body.password,
+            "email_confirm": True,
+            "user_metadata": {
+                "full_name": clean_name,
+                "email_verified": True
+            }
+        })
+        user_id = str(admin_res.user.id)
+    except Exception as e:
+        err_msg = str(e)
+        if "already" in err_msg.lower() or "exists" in err_msg.lower():
+            try:
+                users = admin_client.auth.admin.list_users()
+                existing = next((u for u in users if u.email == clean_email), None)
+                if existing:
+                    admin_client.auth.admin.update_user_by_id(
+                        str(existing.id),
+                        {
+                            "email_confirm": True,
+                            "password": body.password,
+                            "user_metadata": {
+                                "full_name": clean_name,
+                                "email_verified": True
+                            }
+                        }
+                    )
+                    user_id = str(existing.id)
+            except Exception as upd_err:
+                logger.warning(f"Error updating existing user: {upd_err}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="An account with this email address already exists. Please sign in."
+                )
+        else:
             logger.error(f"Supabase user creation error: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=err_msg
             )
 
-    # Generate 6-digit cryptographic OTP
-    otp = generate_secure_otp(6)
-    otp_hash = hash_otp(clean_email, otp, "email_verification")
+    # Mark user verified in profiles
+    try:
+        mark_user_email_verified(user_id or "", clean_email)
+    except Exception:
+        pass
 
-    # Save hashed OTP in database with 10-minute expiry
-    save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
+    # Immediately authenticate to obtain real Supabase JWT session token
+    access_token = ""
+    try:
+        link_res = admin_client.auth.admin.generate_link({"type": "magiclink", "email": clean_email})
+        hashed_token = link_res.properties.hashed_token
+        auth_client = get_supabase_client()
+        auth_res = auth_client.auth.verify_otp({"token_hash": hashed_token, "type": "magiclink"})
+        if auth_res.session:
+            access_token = auth_res.session.access_token
+    except Exception as token_err:
+        logger.warning(f"Session generation fallback: {token_err}")
+        try:
+            auth_client = get_supabase_client()
+            login_res = auth_client.auth.sign_in_with_password({
+                "email": clean_email,
+                "password": body.password
+            })
+            if login_res.session:
+                access_token = login_res.session.access_token
+        except Exception:
+            pass
 
-    # Dispatch verification email
-    dispatch = send_verification_email(clean_email, otp, clean_name)
-    delivered = bool(dispatch.get("delivered"))
-    msg = "A 6-digit verification code has been sent to your email." if delivered else "Verification code generated."
-
-    return RegisterResponse(
-        message=msg,
-        email=clean_email,
-        requires_verification=True,
-        cooldown_seconds=60,
-        delivery_mode="live" if delivered else "sandbox",
-        delivery_notice=dispatch.get("notice"),
-        preview_otp=dispatch.get("preview_otp")
+    return AuthResponse(
+        user=UserProfileResponse(
+            id=user_id or "",
+            email=clean_email,
+            full_name=clean_name,
+            email_verified=True,
+            created_at=None
+        ),
+        access_token=access_token,
+        token_type="bearer"
     )
 
 
@@ -377,7 +386,7 @@ def resend_verification(body: ResendVerificationRequest):
 def login_user(body: UserLoginRequest):
     """
     Authenticates a user via Supabase Auth with email and password.
-    Blocks unverified accounts with HTTP 403 Forbidden.
+    Automatically confirms email if unconfirmed so the user is never blocked.
     """
     clean_email = body.email.strip().lower()
 
@@ -386,14 +395,6 @@ def login_user(body: UserLoginRequest):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email and password are required."
         )
-
-    admin_client = get_admin_client()
-    user_obj = None
-    try:
-        users = admin_client.auth.admin.list_users()
-        user_obj = next((u for u in users if u.email == clean_email), None)
-    except Exception as err:
-        logger.warning(f"User check warning in login: {err}")
 
     # Attempt sign-in with client
     client = get_supabase_client()
@@ -405,54 +406,43 @@ def login_user(body: UserLoginRequest):
         })
     except Exception as e:
         err_msg = str(e).lower()
-        logger.warning(f"Login attempt failed for {clean_email}: {e}")
-
-        # Check if failure is due to unconfirmed email
+        # If failure is due to unconfirmed email, auto-confirm it via admin client and retry
         if "confirm" in err_msg or "verif" in err_msg:
-            # Generate and send fresh OTP so user can verify immediately
-            otp = generate_secure_otp(6)
-            otp_hash = hash_otp(clean_email, otp, "email_verification")
-            save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
-            user_name = ""
-            if user_obj:
-                meta = getattr(user_obj, "user_metadata", {}) or {}
-                user_name = meta.get("full_name") or ""
-            send_verification_email(clean_email, otp, user_name)
-
+            try:
+                admin_client = get_admin_client()
+                users = admin_client.auth.admin.list_users()
+                existing = next((u for u in users if u.email == clean_email), None)
+                if existing:
+                    admin_client.auth.admin.update_user_by_id(
+                        str(existing.id),
+                        {"email_confirm": True, "user_metadata": {**(getattr(existing, "user_metadata", {}) or {}), "email_verified": True}}
+                    )
+                    auth_res = client.auth.sign_in_with_password({
+                        "email": clean_email,
+                        "password": body.password
+                    })
+            except Exception as auto_conf_err:
+                logger.warning(f"Auto-confirm failed: {auto_conf_err}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid email or password.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        else:
+            logger.warning(f"Supabase login failed for {clean_email}: {e}")
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Email verification required. A new verification code has been sent to your email."
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password.",
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if not auth_res.user or not auth_res.session:
+    if not auth_res or not auth_res.user or not auth_res.session:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed. Please verify your credentials."
         )
 
-    # Check verified status
     meta = getattr(auth_res.user, "user_metadata", {}) or {}
-    is_verified = bool(getattr(auth_res.user, "confirmed_at", None)) or bool(meta.get("email_verified", False))
-
-    if not is_verified:
-        # Generate and dispatch fresh OTP
-        otp = generate_secure_otp(6)
-        otp_hash = hash_otp(clean_email, otp, "email_verification")
-        save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
-        full_name = meta.get("full_name") or clean_email.split("@")[0]
-        send_verification_email(clean_email, otp, full_name)
-
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email verification required. A new verification code has been sent to your email."
-        )
-
     full_name = meta.get("full_name") or meta.get("name") or clean_email.split("@")[0]
 
     return AuthResponse(

@@ -89,42 +89,50 @@ export function AuthProvider({ children }) {
       password,
     });
 
-    setPendingEmail(cleanEmail);
-    setAuthView('verify_otp');
+    if (res?.access_token) {
+      const userObj = {
+        id: res.user.id,
+        email: res.user.email,
+        full_name: res.user.full_name,
+        email_verified: true,
+        user_metadata: { full_name: res.user.full_name, email_verified: true },
+      };
+      setSession({ access_token: res.access_token, user: userObj });
+      setUser(userObj);
+
+      try {
+        await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      } catch (e) {
+        // Fallback bearer token active
+      }
+    }
+
     return res;
   };
 
   const signIn = async ({ email, password }) => {
     const cleanEmail = email.trim().toLowerCase();
 
-    try {
-      const res = await loginUser({ email: cleanEmail, password });
-      if (res?.access_token) {
-        const userObj = {
-          id: res.user.id,
-          email: res.user.email,
-          full_name: res.user.full_name,
-          email_verified: true,
-          user_metadata: { full_name: res.user.full_name, email_verified: true },
-        };
-        setSession({ access_token: res.access_token, user: userObj });
-        setUser(userObj);
+    const res = await loginUser({ email: cleanEmail, password });
+    if (res?.access_token) {
+      const userObj = {
+        id: res.user.id,
+        email: res.user.email,
+        full_name: res.user.full_name,
+        email_verified: true,
+        user_metadata: { full_name: res.user.full_name, email_verified: true },
+      };
+      setSession({ access_token: res.access_token, user: userObj });
+      setUser(userObj);
 
-        // Sync with Supabase client SDK in background
-        try {
-          await supabase.auth.signInWithPassword({ email: cleanEmail, password });
-        } catch (syncErr) {
-          // Local bearer token is already active
-        }
+      // Sync with Supabase client SDK in background
+      try {
+        await supabase.auth.signInWithPassword({ email: cleanEmail, password });
+      } catch (syncErr) {
+        // Local bearer token is already active
       }
-      return res;
-    } catch (err) {
-      if (err.requiresVerification || err.status === 403) {
-        setPendingEmail(cleanEmail);
-        setAuthView('verify_otp');
-      }
-      throw err;
     }
+    return res;
   };
 
   const verifyOtp = async ({ email, otp }) => {
