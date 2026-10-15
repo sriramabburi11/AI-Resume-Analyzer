@@ -22,6 +22,7 @@ SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
 
 # Resend API Alternative
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip() or "onboarding@resend.dev"
 
 # HMAC Secret for OTP Hashing
 OTP_HASH_SECRET = os.getenv("OTP_SECRET_KEY", "").strip() or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "resume_analyzer_secure_otp_salt_2026")
@@ -136,7 +137,7 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                     "Content-Type": "application/json",
                 },
                 json={
-                    "from": f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>",
+                    "from": f"{SMTP_FROM_NAME} <{RESEND_FROM_EMAIL}>",
                     "to": [clean_email],
                     "subject": subject,
                     "html": html_content,
