@@ -21,6 +21,7 @@ from services.pdf_parser import extract_resume_text, PDFParsingError
 from services.resume_analyzer import analyze_resume_with_gemini
 from services.supabase_service import (
     get_supabase_client,
+    get_admin_client,
     get_current_user,
     save_resume_analysis,
     get_user_analyses,
@@ -92,11 +93,11 @@ def register_user(body: UserRegisterRequest):
             detail="Password must be at least 6 characters long."
         )
 
-    client = get_supabase_client()
+    admin_client = get_admin_client()
     user_id = None
     try:
         # Create user via Supabase Admin API with email_confirm: True so email rate limits never block the user
-        admin_res = client.auth.admin.create_user({
+        admin_res = admin_client.auth.admin.create_user({
             "email": clean_email,
             "password": body.password,
             "email_confirm": True,
@@ -110,10 +111,10 @@ def register_user(body: UserRegisterRequest):
         if "already" in err_msg.lower() or "exists" in err_msg.lower():
             # If user already registered, ensure email is confirmed and password updated
             try:
-                users = client.auth.admin.list_users()
+                users = admin_client.auth.admin.list_users()
                 existing = next((u for u in users if u.email == clean_email), None)
                 if existing:
-                    client.auth.admin.update_user_by_id(
+                    admin_client.auth.admin.update_user_by_id(
                         str(existing.id),
                         {
                             "email_confirm": True,
@@ -132,9 +133,10 @@ def register_user(body: UserRegisterRequest):
             )
 
     # Immediately authenticate to obtain session token
+    auth_client = get_supabase_client()
     token = ""
     try:
-        login_res = client.auth.sign_in_with_password({
+        login_res = auth_client.auth.sign_in_with_password({
             "email": clean_email,
             "password": body.password
         })
@@ -160,22 +162,45 @@ def register_user(body: UserRegisterRequest):
 def login_user(body: UserLoginRequest):
     """
     Authenticates a user via Supabase Auth with email and password.
+    Automatically confirms email if it was previously unconfirmed.
     """
     clean_email = body.email.strip().lower()
     client = get_supabase_client()
 
+    auth_res = None
     try:
         auth_res = client.auth.sign_in_with_password({
             "email": clean_email,
             "password": body.password
         })
     except Exception as e:
-        logger.warning(f"Supabase login failed for {clean_email}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        err_msg = str(e)
+        # If email not confirmed, auto-confirm it using admin client and retry!
+        if "confirm" in err_msg.lower() or "verif" in err_msg.lower():
+            try:
+                admin_client = get_admin_client()
+                users = admin_client.auth.admin.list_users()
+                existing = next((u for u in users if u.email == clean_email), None)
+                if existing:
+                    admin_client.auth.admin.update_user_by_id(str(existing.id), {"email_confirm": True})
+                    auth_res = client.auth.sign_in_with_password({
+                        "email": clean_email,
+                        "password": body.password
+                    })
+            except Exception as auto_conf_err:
+                logger.warning(f"Auto-confirm failed: {auto_conf_err}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid email or password.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        else:
+            logger.warning(f"Supabase login failed for {clean_email}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     if not auth_res.user or not auth_res.session:
         raise HTTPException(

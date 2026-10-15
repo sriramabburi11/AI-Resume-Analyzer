@@ -81,107 +81,57 @@ export function AuthProvider({ children }) {
     const cleanEmail = email.trim();
     const cleanName = fullName.trim();
 
-    // 1. First attempt registration via backend (pre-confirms email so user is never rate-limited or blocked)
-    try {
-      const resp = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: cleanName,
-          email: cleanEmail,
-          password,
-        }),
-      });
-
-      if (resp.ok) {
-        // Sign in via client SDK to establish full client session
-        const { data: clientAuth, error: clientErr } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
-
-        if (!clientErr && clientAuth?.session) {
-          setSession(clientAuth.session);
-          setUser(formatUser(clientAuth.session.user));
-          return clientAuth;
-        }
-
-        const data = await resp.json();
-        if (data?.access_token) {
-          const userObj = {
-            id: data.user.id,
-            email: data.user.email,
-            full_name: data.user.full_name,
-            user_metadata: { full_name: data.user.full_name },
-          };
-          setUser(userObj);
-          setSession({ access_token: data.access_token, user: userObj });
-          return data;
-        }
-      }
-    } catch (e) {
-      console.warn('Backend register notice, falling back to client SDK:', e);
-    }
-
-    // 2. Direct Supabase Client fallback
-    const { data, error } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password,
-      options: {
-        data: {
-          full_name: cleanName,
-        },
-      },
+    // 1. Call backend to create pre-confirmed user via Supabase Admin API (bypasses email cooldown and verification blocks)
+    const resp = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        full_name: cleanName,
+        email: cleanEmail,
+        password,
+      }),
     });
 
-    if (error) {
-      const errMsg = error.message.toLowerCase();
-      // If rate limited or already exists, attempt immediate sign in!
-      if (
-        errMsg.includes('already registered') ||
-        errMsg.includes('already exists') ||
-        errMsg.includes('security purposes') ||
-        errMsg.includes('rate limit')
-      ) {
-        const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
-          email: cleanEmail,
-          password,
-        });
-        if (!loginErr && loginData?.session) {
-          setSession(loginData.session);
-          setUser(formatUser(loginData.session.user));
-          return loginData;
-        }
-      }
-      throw error;
+    if (!resp.ok) {
+      const errJson = await resp.json().catch(() => ({}));
+      throw new Error(errJson.detail || 'Registration failed.');
     }
 
-    if (data?.session) {
-      setSession(data.session);
-      setUser(formatUser(data.session.user));
-      return data;
-    }
-
-    // Try signing in immediately if user was created
-    const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
+    // 2. Immediately sign in on client SDK to activate session and navigate to Home Page
+    const { data: clientAuth, error: clientErr } = await supabase.auth.signInWithPassword({
       email: cleanEmail,
       password,
     });
-    if (!loginErr && loginData?.session) {
-      setSession(loginData.session);
-      setUser(formatUser(loginData.session.user));
-      return loginData;
+
+    if (clientErr) {
+      throw clientErr;
     }
 
-    return {
-      needsEmailConfirmation: true,
-      message: 'Account created! Please check your email inbox to confirm your email and log in.',
-    };
+    if (clientAuth?.session) {
+      setSession(clientAuth.session);
+      setUser(formatUser(clientAuth.session.user));
+    }
+
+    return clientAuth;
   };
 
   const signIn = async ({ email, password }) => {
+    const cleanEmail = email.trim();
+
+    // 1. Ensure account is confirmed on backend in case it was created unconfirmed
+    try {
+      await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, password }),
+      });
+    } catch (e) {
+      console.warn('Backend login notice:', e);
+    }
+
+    // 2. Sign in via client SDK to establish reactive session
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
+      email: cleanEmail,
       password,
     });
 

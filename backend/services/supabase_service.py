@@ -35,6 +35,15 @@ def get_supabase_client() -> Client:
         raise RuntimeError(f"Could not connect to Supabase: {str(e)}")
 
 
+def get_admin_client() -> Client:
+    """Always returns a fresh client with the service role key for administrative operations without session contamination."""
+    if not SUPABASE_URL or not SERVICE_KEY:
+        raise RuntimeError(
+            "Supabase credentials not configured. Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env"
+        )
+    return create_client(SUPABASE_URL, SERVICE_KEY)
+
+
 security_bearer = HTTPBearer(auto_error=False)
 
 
