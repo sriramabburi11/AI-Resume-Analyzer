@@ -25,23 +25,50 @@ An end-to-end web application that allows users to upload a PDF resume and recei
 ```text
 React (Vite + Tailwind CSS)
        │
-       ▼ (REST API / multipart form-data)
+       ▼ (REST API / JSON & multipart form-data)
 FastAPI Backend (Python 3.13)
        │
+       ├── PostgreSQL (SQLAlchemy 2.x + psycopg3 + Alembic migrations)
+       ├── Argon2id Password Hashing & JWT Authentication
        ├── PyMuPDF (PDF Text & Layout Heuristics)
        ├── ATS & Structure Rules Engine
        └── Gemini API (google-genai SDK) / Intelligent Heuristic Fallback
 ```
 
 * **Frontend**: React, Vite, Tailwind CSS, Lucide Icons.
-* **Backend**: FastAPI, PyMuPDF, Pydantic v2, Python-Dotenv, Google GenAI SDK.
-* **Database**: None (Stateless in-memory processing for maximum privacy).
+* **Backend**: FastAPI, SQLAlchemy 2.x, psycopg3, Alembic, Argon2id (`argon2-cffi`), PyJWT, PyMuPDF, Pydantic v2.
+* **Database**: PostgreSQL (self-managed or Dockerized via `docker-compose.yml`).
+* **Privacy**: Uploaded resumes are processed in-memory; raw files are never stored.
 
 ---
 
 ## 🚀 Quick Start Instructions
 
-### 1. Environment Setup (Backend)
+### 1. Database Setup (PostgreSQL)
+
+You can run PostgreSQL locally using Docker or connect to any PostgreSQL instance:
+
+```bash
+# Start PostgreSQL 16 container via Docker Compose
+docker compose up -d
+```
+
+Configure `backend/.env`:
+```env
+DATABASE_URL=postgresql+psycopg://postgres:postgrespassword@localhost:5432/resume_analyzer
+JWT_SECRET_KEY=your_secure_jwt_secret_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+Run database migrations:
+```bash
+cd backend
+alembic upgrade head
+```
+
+---
+
+### 2. Backend Setup
 
 1. Navigate to the `backend` folder:
    ```bash

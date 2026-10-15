@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileCheck, X, AlertCircle, ArrowRight, Briefcase, Sparkles, Loader2 } from 'lucide-react';
+import { UploadCloud, FileCheck, X, AlertCircle, ArrowRight, Briefcase, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
 
 const MAX_SIZE_MB = 10;
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
@@ -209,6 +209,14 @@ export default function UploadSection({ onAnalyze, isLoading, error, setError })
               </>
             )}
           </button>
+        </div>
+
+        {/* Privacy & AI Provider Disclosure */}
+        <div className="pt-2 text-center text-xs text-slate-500 flex items-center justify-center gap-1.5">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          <span>
+            Uploaded resumes are processed in-memory and analyzed with Google Gemini AI. Files and extracted raw text are not permanently stored.
+          </span>
         </div>
       </div>
     </div>

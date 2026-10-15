@@ -21,7 +21,7 @@ import AtsAnalysis from './AtsAnalysis';
 import StructureAnalysis from './StructureAnalysis';
 import JobMatchAnalysis from './JobMatchAnalysis';
 
-export default function Dashboard({ data, onReset }) {
+export default function Dashboard({ data, onReset, onBackToHistory }) {
   const [activeTab, setActiveTab] = useState('improvements');
 
   if (!data) return null;
@@ -31,10 +31,19 @@ export default function Dashboard({ data, onReset }) {
       {/* Top Header Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm">
         <div className="space-y-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-2">
             <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-200">
               Analysis Complete
             </span>
+            {data.saved_to_history ? (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Saved to History
+              </span>
+            ) : data.history_error ? (
+              <span className="text-xs font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200 flex items-center gap-1" title={data.history_error}>
+                <AlertTriangle className="w-3 h-3 text-amber-600" /> Analysis Not Saved
+              </span>
+            ) : null}
             {data.filename && (
               <span className="text-xs font-semibold text-slate-500 truncate max-w-xs">
                 📄 {data.filename}
@@ -46,14 +55,27 @@ export default function Dashboard({ data, onReset }) {
           </h1>
         </div>
 
-        <button
-          type="button"
-          onClick={onReset}
-          className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold flex items-center gap-2 shadow-xs transition cursor-pointer"
-        >
-          <RotateCcw className="w-4 h-4 text-slate-500" />
-          <span>Upload Another Resume</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onBackToHistory && (
+            <button
+              type="button"
+              onClick={onBackToHistory}
+              className="px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold flex items-center gap-2 shadow-xs transition cursor-pointer"
+            >
+              <ArrowLeft className="w-4 h-4 text-slate-500" />
+              <span>Back to History</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onReset}
+            className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold flex items-center gap-2 shadow-sm transition cursor-pointer"
+          >
+            <RotateCcw className="w-4 h-4" />
+            <span>Upload Another Resume</span>
+          </button>
+        </div>
       </div>
 
       {/* Feature 9 & 10: Overall Score & Sub-scores Overview */}

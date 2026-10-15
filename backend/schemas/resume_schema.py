@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field
 
 class ImprovementItem(BaseModel):
@@ -65,3 +65,59 @@ class ResumeAnalysisResponse(BaseModel):
 
     filename: Optional[str] = Field(default=None)
     text_length: Optional[int] = Field(default=0)
+    saved_analysis_id: Optional[str] = Field(default=None, description="Database UUID of the saved analysis")
+    saved_to_history: bool = Field(default=False, description="Whether the record was successfully saved in history")
+    history_error: Optional[str] = Field(default=None, description="Error message if saving history failed")
+
+class UserRegisterRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+
+class UserLoginRequest(BaseModel):
+    email: str
+    password: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+class UserProfileResponse(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    email_verified: bool = False
+    created_at: Optional[str] = None
+
+class UserProfileUpdate(BaseModel):
+    full_name: str
+
+class AuthResponse(BaseModel):
+    user: UserProfileResponse
+    access_token: str
+    token_type: str = "bearer"
+
+class AnalysisHistoryItem(BaseModel):
+    id: str
+    resume_name: Optional[str] = None
+    job_title: Optional[str] = None
+    ats_score: Optional[float] = None
+    structure_score: Optional[float] = None
+    content_score: Optional[float] = None
+    job_match_score: Optional[float] = None
+    created_at: str
+
+class AnalysisDetailResponse(BaseModel):
+    id: str
+    user_id: str
+    resume_name: Optional[str] = None
+    job_title: Optional[str] = None
+    ats_score: Optional[float] = None
+    structure_score: Optional[float] = None
+    content_score: Optional[float] = None
+    job_match_score: Optional[float] = None
+    analysis_summary: Dict[str, Any]
+    created_at: str
