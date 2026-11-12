@@ -1,57 +1,54 @@
-import os
-import re
 import logging
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status, Depends, Response
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
+import re
+from datetime import UTC, datetime
+from typing import Any
 
+import uvicorn
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from schemas.resume_schema import (
-    ResumeAnalysisResponse,
-    UserRegisterRequest,
-    UserLoginRequest,
-    ForgotPasswordRequest,
-    ResetPasswordRequest,
-    UserProfileResponse,
-    UserProfileUpdate,
+    AnalysisDetailResponse,
+    AnalysisHistoryItem,
     AuthResponse,
-    RegisterResponse,
-    VerifyEmailRequest,
+    ForgotPasswordRequest,
     ResendVerificationRequest,
     ResendVerificationResponse,
-    AnalysisHistoryItem,
-    AnalysisDetailResponse
-)
-from services.pdf_parser import extract_resume_text, PDFParsingError
-from services.resume_analyzer import analyze_resume_with_gemini
-from services.privacy_guardrail import (
-    validate_uploaded_file,
-    validate_job_description,
-    PrivacyValidationError,
-    redact_pii,
-    sanitize_log_message
+    ResumeAnalysisResponse,
+    UserLoginRequest,
+    UserProfileResponse,
+    UserProfileUpdate,
+    UserRegisterRequest,
+    VerifyEmailRequest,
 )
 from services.email_service import (
     generate_secure_otp,
     hash_otp,
+    send_verification_email,
     verify_otp_hash,
-    send_verification_email
 )
+from services.pdf_parser import PDFParsingError, extract_resume_text
+from services.privacy_guardrail import (
+    PrivacyValidationError,
+    redact_pii,
+    sanitize_log_message,
+    validate_job_description,
+    validate_uploaded_file,
+)
+from services.resume_analyzer import analyze_resume_with_gemini
 from services.supabase_service import (
-    get_supabase_client,
-    get_admin_client,
-    get_current_user,
-    save_resume_analysis,
-    get_user_analyses,
-    get_analysis_by_id,
-    delete_analysis_by_id,
     check_supabase_connection,
-    save_otp_record,
+    delete_analysis_by_id,
     get_active_otp_record,
+    get_admin_client,
+    get_analysis_by_id,
+    get_current_user,
+    get_supabase_client,
+    get_user_analyses,
     increment_otp_attempt,
     mark_otp_consumed,
-    mark_user_email_verified
+    mark_user_email_verified,
+    save_otp_record,
+    save_resume_analysis,
 )
 
 logger = logging.getLogger("main")
@@ -122,7 +119,8 @@ def register_user(body: UserRegisterRequest):
     admin_client = get_admin_client()
     user_id = None
     try:
-        # Create user via Supabase Admin API with email_confirm: True so user is active immediately
+        # Create user via Supabase Admin API with email_confirm: True so user
+        # is active immediately
         admin_res = admin_client.auth.admin.create_user({
             "email": clean_email,
             "password": body.password,
@@ -138,7 +136,8 @@ def register_user(body: UserRegisterRequest):
         if "already" in err_msg.lower() or "exists" in err_msg.lower():
             try:
                 users = admin_client.auth.admin.list_users()
-                existing = next((u for u in users if u.email == clean_email), None)
+                existing = next(
+                    (u for u in users if u.email == clean_email), None)
                 if existing:
                     admin_client.auth.admin.update_user_by_id(
                         str(existing.id),
@@ -153,13 +152,19 @@ def register_user(body: UserRegisterRequest):
                     )
                     user_id = str(existing.id)
             except Exception as upd_err:
-                logger.warning(f"Error updating existing user: {sanitize_log_message(str(upd_err))}")
+                logger.warning(
+                    f"Error updating existing user: {
+                        sanitize_log_message(
+                            str(upd_err))}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="An account with this email address already exists. Please sign in."
                 )
         else:
-            logger.error(f"Supabase user creation error: {sanitize_log_message(str(e))}")
+            logger.error(
+                f"Supabase user creation error: {
+                    sanitize_log_message(
+                        str(e))}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Registration failed. Please try again."
@@ -174,14 +179,19 @@ def register_user(body: UserRegisterRequest):
     # Immediately authenticate to obtain real Supabase JWT session token
     access_token = ""
     try:
-        link_res = admin_client.auth.admin.generate_link({"type": "magiclink", "email": clean_email})
+        link_res = admin_client.auth.admin.generate_link(
+            {"type": "magiclink", "email": clean_email})
         hashed_token = link_res.properties.hashed_token
         auth_client = get_supabase_client()
-        auth_res = auth_client.auth.verify_otp({"token_hash": hashed_token, "type": "magiclink"})
+        auth_res = auth_client.auth.verify_otp(
+            {"token_hash": hashed_token, "type": "magiclink"})
         if auth_res.session:
             access_token = auth_res.session.access_token
     except Exception as token_err:
-        logger.warning(f"Session generation fallback: {sanitize_log_message(str(token_err))}")
+        logger.warning(
+            f"Session generation fallback: {
+                sanitize_log_message(
+                    str(token_err))}")
         try:
             auth_client = get_supabase_client()
             login_res = auth_client.auth.sign_in_with_password({
@@ -246,10 +256,15 @@ def verify_email(body: VerifyEmailRequest):
 
     # Validate OTP hash
     stored_hash = otp_record.get("otp_hash", "")
-    is_valid = verify_otp_hash(clean_email, clean_otp, stored_hash, "email_verification")
+    is_valid = verify_otp_hash(
+        clean_email,
+        clean_otp,
+        stored_hash,
+        "email_verification")
 
     if not is_valid:
-        new_attempts = increment_otp_attempt(record_id, clean_email, "email_verification")
+        new_attempts = increment_otp_attempt(
+            record_id, clean_email, "email_verification")
         remaining = max(0, max_attempts - new_attempts)
         if remaining == 0:
             raise HTTPException(
@@ -258,7 +273,8 @@ def verify_email(body: VerifyEmailRequest):
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid verification code. {remaining} attempt{'s' if remaining != 1 else ''} remaining."
+            detail=f"Invalid verification code. {remaining} attempt{
+                's' if remaining != 1 else ''} remaining."
         )
 
     # Valid OTP: Consume record
@@ -285,19 +301,27 @@ def verify_email(body: VerifyEmailRequest):
             )
             mark_user_email_verified(user_id, clean_email)
     except Exception as e:
-        logger.error(f"Error marking user verified: {sanitize_log_message(str(e))}")
+        logger.error(
+            f"Error marking user verified: {
+                sanitize_log_message(
+                    str(e))}")
 
     # Generate authenticated session token
     access_token = ""
     try:
-        link_res = admin_client.auth.admin.generate_link({"type": "magiclink", "email": clean_email})
+        link_res = admin_client.auth.admin.generate_link(
+            {"type": "magiclink", "email": clean_email})
         hashed_token = link_res.properties.hashed_token
         auth_client = get_supabase_client()
-        auth_res = auth_client.auth.verify_otp({"token_hash": hashed_token, "type": "magiclink"})
+        auth_res = auth_client.auth.verify_otp(
+            {"token_hash": hashed_token, "type": "magiclink"})
         if auth_res.session:
             access_token = auth_res.session.access_token
     except Exception as token_err:
-        logger.warning(f"Session generation warning: {sanitize_log_message(str(token_err))}")
+        logger.warning(
+            f"Session generation warning: {
+                sanitize_log_message(
+                    str(token_err))}")
 
     return AuthResponse(
         user=UserProfileResponse(
@@ -312,7 +336,8 @@ def verify_email(body: VerifyEmailRequest):
     )
 
 
-@app.post("/api/auth/resend-verification", response_model=ResendVerificationResponse)
+@app.post("/api/auth/resend-verification",
+          response_model=ResendVerificationResponse)
 def resend_verification(body: ResendVerificationRequest):
     """
     Issues and sends a fresh 6-digit OTP code to the user's email with a 60-second cooldown rate limit.
@@ -338,7 +363,11 @@ def resend_verification(body: ResendVerificationRequest):
 
         meta = getattr(user_obj, "user_metadata", {}) or {}
         user_name = meta.get("full_name") or user_name
-        is_already_verified = bool(getattr(user_obj, "confirmed_at", None)) or meta.get("email_verified") is True
+        is_already_verified = bool(
+            getattr(
+                user_obj,
+                "confirmed_at",
+                None)) or meta.get("email_verified") is True
         if is_already_verified:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -347,7 +376,10 @@ def resend_verification(body: ResendVerificationRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"Error checking user for resend: {sanitize_log_message(str(e))}")
+        logger.warning(
+            f"Error checking user for resend: {
+                sanitize_log_message(
+                    str(e))}")
 
     # Check cooldown against previous record
     active_record = get_active_otp_record(clean_email, "email_verification")
@@ -355,25 +387,33 @@ def resend_verification(body: ResendVerificationRequest):
         last_sent = active_record["last_sent_at"]
         if isinstance(last_sent, str):
             try:
-                last_dt = datetime.fromisoformat(last_sent.replace("Z", "+00:00"))
+                last_dt = datetime.fromisoformat(
+                    last_sent.replace("Z", "+00:00"))
             except Exception:
                 last_dt = None
         else:
             last_dt = last_sent
 
         if last_dt:
-            elapsed = (datetime.now(timezone.utc) - last_dt.astimezone(timezone.utc)).total_seconds()
+            elapsed = (
+                datetime.now(UTC) -
+                last_dt.astimezone(UTC)).total_seconds()
             if elapsed < 60:
                 wait_sec = int(60 - elapsed)
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=f"Please wait {wait_sec} second{'s' if wait_sec != 1 else ''} before requesting another code."
+                    detail=f"Please wait {wait_sec} second{
+                        's' if wait_sec != 1 else ''} before requesting another code."
                 )
 
     # Generate new OTP
     otp = generate_secure_otp(6)
     otp_hash = hash_otp(clean_email, otp, "email_verification")
-    save_otp_record(clean_email, otp_hash, "email_verification", expires_in_minutes=10)
+    save_otp_record(
+        clean_email,
+        otp_hash,
+        "email_verification",
+        expires_in_minutes=10)
 
     # Dispatch email
     dispatch = send_verification_email(clean_email, otp, user_name)
@@ -413,23 +453,27 @@ def login_user(body: UserLoginRequest):
         })
     except Exception as e:
         err_msg = str(e).lower()
-        # If failure is due to unconfirmed email, auto-confirm it via admin client and retry
+        # If failure is due to unconfirmed email, auto-confirm it via admin
+        # client and retry
         if "confirm" in err_msg or "verif" in err_msg:
             try:
                 admin_client = get_admin_client()
                 users = admin_client.auth.admin.list_users()
-                existing = next((u for u in users if u.email == clean_email), None)
+                existing = next(
+                    (u for u in users if u.email == clean_email), None)
                 if existing:
                     admin_client.auth.admin.update_user_by_id(
                         str(existing.id),
-                        {"email_confirm": True, "user_metadata": {**(getattr(existing, "user_metadata", {}) or {}), "email_verified": True}}
+                        {"email_confirm": True, "user_metadata": {
+                            **(getattr(existing, "user_metadata", {}) or {}), "email_verified": True}}
                     )
                     auth_res = client.auth.sign_in_with_password({
                         "email": clean_email,
                         "password": body.password
                     })
             except Exception as auto_conf_err:
-                logger.warning(f"Auto-confirm failed: {sanitize_log_message(str(auto_conf_err))}")
+                logger.warning(
+                    f"Auto-confirm failed: {sanitize_log_message(str(auto_conf_err))}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid email or password.",
@@ -451,7 +495,8 @@ def login_user(body: UserLoginRequest):
         )
 
     meta = getattr(auth_res.user, "user_metadata", {}) or {}
-    full_name = meta.get("full_name") or meta.get("name") or clean_email.split("@")[0]
+    full_name = meta.get("full_name") or meta.get(
+        "name") or clean_email.split("@")[0]
 
     return AuthResponse(
         user=UserProfileResponse(
@@ -459,7 +504,10 @@ def login_user(body: UserLoginRequest):
             email=auth_res.user.email or clean_email,
             full_name=full_name,
             email_verified=True,
-            created_at=str(auth_res.user.created_at) if hasattr(auth_res.user, "created_at") else None
+            created_at=str(
+                auth_res.user.created_at) if hasattr(
+                auth_res.user,
+                "created_at") else None
         ),
         access_token=auth_res.session.access_token,
         token_type="bearer"
@@ -475,7 +523,8 @@ def logout_user():
 
 
 @app.get("/api/auth/me", response_model=UserProfileResponse)
-def get_current_user_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
+def get_current_user_profile(
+        current_user: dict[str, Any] = Depends(get_current_user)):
     """
     Returns the currently authenticated user's profile from Supabase Auth.
     """
@@ -491,7 +540,7 @@ def get_current_user_profile(current_user: Dict[str, Any] = Depends(get_current_
 @app.put("/api/auth/profile", response_model=UserProfileResponse)
 def update_profile_name(
     body: UserProfileUpdate,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: dict[str, Any] = Depends(get_current_user)
 ):
     """
     Updates the user's full name in Supabase user metadata.
@@ -510,7 +559,10 @@ def update_profile_name(
             {"user_metadata": {"full_name": clean_name}}
         )
     except Exception as e:
-        logger.error(f"Error updating user profile: {sanitize_log_message(str(e))}")
+        logger.error(
+            f"Error updating user profile: {
+                sanitize_log_message(
+                    str(e))}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update profile name."
@@ -550,8 +602,8 @@ def forgot_password(body: ForgotPasswordRequest):
 @app.post("/api/analyze-resume", response_model=ResumeAnalysisResponse)
 async def analyze_resume(
     resume: UploadFile = File(...),
-    job_description: Optional[str] = Form(None),
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    job_description: str | None = Form(None),
+    current_user: dict[str, Any] = Depends(get_current_user)
 ):
     """
     Protected resume analysis endpoint with Data Minimization and Deterministic Privacy Guardrails.
@@ -576,7 +628,8 @@ async def analyze_resume(
         # 2. Extract text and metadata in-memory
         pdf_meta = extract_resume_text(contents)
 
-        # 3. Analyze resume with Gemini AI (PII is redacted before external AI call, or mock fallback)
+        # 3. Analyze resume with Gemini AI (PII is redacted before external AI
+        # call, or mock fallback)
         analysis_result = analyze_resume_with_gemini(
             pdf_meta=pdf_meta,
             job_description=validated_jd,
@@ -643,16 +696,17 @@ async def analyze_resume(
             detail="An error occurred while analyzing the resume. Please try again."
         )
     finally:
-        # Guaranteed cleanup of FastAPI SpooledTemporaryFile to prevent lingering files on disk
+        # Guaranteed cleanup of FastAPI SpooledTemporaryFile to prevent
+        # lingering files on disk
         try:
             await resume.close()
         except Exception:
             pass
 
 
-@app.get("/api/history", response_model=List[AnalysisHistoryItem])
-@app.get("/api/analyses", response_model=List[AnalysisHistoryItem])
-def get_user_history(current_user: Dict[str, Any] = Depends(get_current_user)):
+@app.get("/api/history", response_model=list[AnalysisHistoryItem])
+@app.get("/api/analyses", response_model=list[AnalysisHistoryItem])
+def get_user_history(current_user: dict[str, Any] = Depends(get_current_user)):
     """
     Returns the user's historical resume analysis records from Supabase.
     Strictly isolated to the authenticated user ID.
@@ -664,10 +718,14 @@ def get_user_history(current_user: Dict[str, Any] = Depends(get_current_user)):
             id=str(r["id"]),
             resume_name=r.get("resume_name"),
             job_title=r.get("job_title"),
-            ats_score=float(r["ats_score"]) if r.get("ats_score") is not None else None,
-            structure_score=float(r["structure_score"]) if r.get("structure_score") is not None else None,
-            content_score=float(r["content_score"]) if r.get("content_score") is not None else None,
-            job_match_score=float(r["job_match_score"]) if r.get("job_match_score") is not None else None,
+            ats_score=float(r["ats_score"]) if r.get(
+                "ats_score") is not None else None,
+            structure_score=float(r["structure_score"]) if r.get(
+                "structure_score") is not None else None,
+            content_score=float(r["content_score"]) if r.get(
+                "content_score") is not None else None,
+            job_match_score=float(r["job_match_score"]) if r.get(
+                "job_match_score") is not None else None,
             created_at=str(r.get("created_at", ""))
         )
         for r in records
@@ -678,7 +736,7 @@ def get_user_history(current_user: Dict[str, Any] = Depends(get_current_user)):
 @app.get("/api/analyses/{analysis_id}", response_model=AnalysisDetailResponse)
 def get_analysis_detail(
     analysis_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: dict[str, Any] = Depends(get_current_user)
 ):
     """
     Fetches details for a single analysis record from Supabase belonging strictly to the authenticated user.
@@ -696,10 +754,14 @@ def get_analysis_detail(
         user_id=str(record["user_id"]),
         resume_name=record.get("resume_name"),
         job_title=record.get("job_title"),
-        ats_score=float(record["ats_score"]) if record.get("ats_score") is not None else None,
-        structure_score=float(record["structure_score"]) if record.get("structure_score") is not None else None,
-        content_score=float(record["content_score"]) if record.get("content_score") is not None else None,
-        job_match_score=float(record["job_match_score"]) if record.get("job_match_score") is not None else None,
+        ats_score=float(record["ats_score"]) if record.get(
+            "ats_score") is not None else None,
+        structure_score=float(record["structure_score"]) if record.get(
+            "structure_score") is not None else None,
+        content_score=float(record["content_score"]) if record.get(
+            "content_score") is not None else None,
+        job_match_score=float(record["job_match_score"]) if record.get(
+            "job_match_score") is not None else None,
         analysis_summary=record.get("analysis_summary", {}),
         created_at=str(record.get("created_at", ""))
     )
@@ -709,7 +771,7 @@ def get_analysis_detail(
 @app.delete("/api/analyses/{analysis_id}")
 def delete_history_item(
     analysis_id: str,
-    current_user: Dict[str, Any] = Depends(get_current_user)
+    current_user: dict[str, Any] = Depends(get_current_user)
 ):
     """
     Deletes an analysis record from Supabase belonging strictly to the authenticated user.

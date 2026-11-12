@@ -1,17 +1,17 @@
-import os
 import json
+import os
 import re
-from typing import Dict, Any, Optional, List
-from dotenv import load_dotenv
+from typing import Any
 
+from dotenv import load_dotenv
 from schemas.resume_schema import (
-    ResumeAnalysisResponse,
+    ATSIssue,
     ImprovementItem,
-    RoleRecommendation,
-    KeywordAnalysis,
     JobMatchDetails,
+    KeywordAnalysis,
+    ResumeAnalysisResponse,
+    RoleRecommendation,
     SectionDetail,
-    ATSIssue
 )
 from services.ats_analyzer import analyze_structure_and_ats
 from services.privacy_guardrail import redact_pii, sanitize_log_message
@@ -52,15 +52,16 @@ CRITICAL RULES:
    - Output MUST be pure JSON with no markdown block fences or extra text.
 """
 
+
 def generate_mock_fallback_analysis(
     text: str,
-    pdf_meta: Dict[str, Any],
+    pdf_meta: dict[str, Any],
     structure_score: int,
     ats_score: int,
-    sections_map: Dict[str, bool],
-    section_details: List[SectionDetail],
-    ats_issues: List[ATSIssue],
-    job_description: Optional[str] = None
+    sections_map: dict[str, bool],
+    section_details: list[SectionDetail],
+    ats_issues: list[ATSIssue],
+    job_description: str | None = None
 ) -> ResumeAnalysisResponse:
     """
     Intelligent heuristic fallback analyzer when Gemini API is unavailable or key is missing.
@@ -69,10 +70,20 @@ def generate_mock_fallback_analysis(
     text_lower = text.lower()
 
     # Extract sentences / bullets for improvements
-    lines = [line.strip() for line in text.split("\n") if len(line.strip()) > 15]
-    
+    lines = [line.strip()
+             for line in text.split("\n") if len(line.strip()) > 15]
+
     # Simple bullet/statement extract
-    bullet_candidates = [l for l in lines if any(l.startswith(ch) for ch in ['•', '-', '*', '▪', '1.', '2.', '3.']) or len(l) > 30]
+    bullet_candidates = [
+        cand for cand in lines if any(
+            cand.startswith(ch) for ch in [
+                '•',
+                '-',
+                '*',
+                '▪',
+                '1.',
+                '2.',
+                '3.']) or len(cand) > 30]
     if not bullet_candidates:
         bullet_candidates = lines[:5]
 
@@ -89,13 +100,21 @@ def generate_mock_fallback_analysis(
         "Concepts": ["rest api", "graphql", "microservices", "ci/cd", "agile", "unit testing", "system design", "object-oriented programming"]
     }
 
-    matched_by_cat = {"Languages": [], "Frameworks": [], "Databases": [], "Tools": [], "Cloud": [], "Concepts": []}
+    matched_by_cat = {
+        "Languages": [],
+        "Frameworks": [],
+        "Databases": [],
+        "Tools": [],
+        "Cloud": [],
+        "Concepts": []}
     all_matched = []
 
     for cat, kw_list in tech_keywords.items():
         for kw in kw_list:
             if kw in text_lower:
-                matched_by_cat[cat].append(kw.title() if len(kw) <= 4 or kw in ["fastapi", "django", "flask"] else kw.capitalize())
+                matched_by_cat[cat].append(
+                    kw.title() if len(kw) <= 4 or kw in [
+                        "fastapi", "django", "flask"] else kw.capitalize())
                 all_matched.append(kw.title())
 
     # Formulate improvements based on real text content
@@ -105,7 +124,9 @@ def generate_mock_fallback_analysis(
             priority="High",
             current=sample_bullet_clean[:120],
             problem="The bullet point describes actions at a high level without detailing specific impact or technical depth.",
-            recommended_change=f"Engineered key functionality in {sample_bullet_clean[:60]} using modern architectural practices, enhancing responsiveness and maintainability.",
+            recommended_change=f"Engineered key functionality in {
+                sample_bullet_clean[
+                    :60]} using modern architectural practices, enhancing responsiveness and maintainability.",
             reason="Using active verbs and highlighting functional impact makes the achievement significantly more compelling to engineering hiring managers."
         ))
 
@@ -128,25 +149,48 @@ def generate_mock_fallback_analysis(
 
     # Determine roles match based on detected skills
     roles = []
-    has_python = any(k in text_lower for k in ["python", "fastapi", "django", "flask"])
-    has_frontend = any(k in text_lower for k in ["react", "javascript", "typescript", "html", "css", "tailwind", "vue"])
-    has_backend = any(k in text_lower for k in ["node.js", "fastapi", "python", "express", "sql", "postgresql", "mongodb"])
+    has_python = any(
+        k in text_lower for k in [
+            "python",
+            "fastapi",
+            "django",
+            "flask"])
+    has_frontend = any(
+        k in text_lower for k in [
+            "react",
+            "javascript",
+            "typescript",
+            "html",
+            "css",
+            "tailwind",
+            "vue"])
+    has_backend = any(
+        k in text_lower for k in [
+            "node.js",
+            "fastapi",
+            "python",
+            "express",
+            "sql",
+            "postgresql",
+            "mongodb"])
 
     if has_python and has_frontend and has_backend:
         roles.append(RoleRecommendation(
             role="Full Stack Developer",
             match_percentage=92,
-            matching_skills=[s for s in all_matched if s.lower() in ["python", "react", "javascript", "sql", "git", "rest api"]][:5],
+            matching_skills=[s for s in all_matched if s.lower(
+            ) in ["python", "react", "javascript", "sql", "git", "rest api"]][:5],
             missing_skills=["Docker", "AWS", "CI/CD"],
             reason="The resume demonstrates hands-on experience across frontend, backend logic, APIs, and data modeling.",
             evidence="Projects and experience sections reference full stack web engineering tools."
         ))
-    
+
     if has_python:
         roles.append(RoleRecommendation(
             role="Python Developer",
             match_percentage=88,
-            matching_skills=[s for s in all_matched if s.lower() in ["python", "fastapi", "django", "sql", "git"]][:5],
+            matching_skills=[s for s in all_matched if s.lower(
+            ) in ["python", "fastapi", "django", "sql", "git"]][:5],
             missing_skills=["PyTest", "Celery"],
             reason="Strong presence of Python and associated ecosystem tools detected.",
             evidence="Code samples, projects, or work history explicitly mention Python development."
@@ -156,7 +200,8 @@ def generate_mock_fallback_analysis(
         roles.append(RoleRecommendation(
             role="Backend Developer",
             match_percentage=84,
-            matching_skills=[s for s in all_matched if s.lower() in ["python", "node.js", "postgresql", "sql", "rest api"]][:5],
+            matching_skills=[s for s in all_matched if s.lower(
+            ) in ["python", "node.js", "postgresql", "sql", "rest api"]][:5],
             missing_skills=["Microservices", "Redis", "Docker"],
             reason="Good foundational backend and database manipulation indicators.",
             evidence="Backend framework and API handling keywords identified."
@@ -165,7 +210,8 @@ def generate_mock_fallback_analysis(
     roles.append(RoleRecommendation(
         role="AI / Software Application Engineer",
         match_percentage=80,
-        matching_skills=[s for s in all_matched if s.lower() in ["python", "javascript", "git", "rest api"]][:5],
+        matching_skills=[s for s in all_matched if s.lower(
+        ) in ["python", "javascript", "git", "rest api"]][:5],
         missing_skills=["LangChain", "Vector DBs", "PyTorch"],
         reason="Solid general software development skills that translate well to modern AI application engineering.",
         evidence="Demonstrates core programming proficiency and project building capabilities."
@@ -176,13 +222,15 @@ def generate_mock_fallback_analysis(
     job_match_details = None
     if job_description and len(job_description.strip()) > 20:
         jd_lower = job_description.lower()
-        jd_words = set(re.findall(r'\b[a-z]{3,}\b', jd_lower))
-        
+
         # Check matching skills between resume and JD
-        jd_tech_keywords = [kw for cat in tech_keywords.values() for kw in cat if kw in jd_lower]
-        matched_jd_skills = [kw.title() for kw in jd_tech_keywords if kw in text_lower]
-        missing_jd_skills = [kw.title() for kw in jd_tech_keywords if kw not in text_lower]
-        
+        jd_tech_keywords = [kw for cat in tech_keywords.values()
+                            for kw in cat if kw in jd_lower]
+        matched_jd_skills = [kw.title()
+                             for kw in jd_tech_keywords if kw in text_lower]
+        missing_jd_skills = [kw.title()
+                             for kw in jd_tech_keywords if kw not in text_lower]
+
         # Deduplicate
         matched_jd_skills = list(dict.fromkeys(matched_jd_skills))
         missing_jd_skills = list(dict.fromkeys(missing_jd_skills))
@@ -200,16 +248,27 @@ def generate_mock_fallback_analysis(
             missing_skills=missing_jd_skills or ["Docker", "AWS"],
             partial_matches=["System Design", "Agile Methodologies"],
             recommendations=[
-                f"Highlight your experience with {', '.join(matched_jd_skills[:3])} near the top of your resume.",
-                f"Add experience with {missing_jd_skills[0]} ONLY if you genuinely have used it in prior projects or coursework." if missing_jd_skills else "Tailor project descriptions to closely match keywords in the targeted job description."
+                (
+                    f"Highlight your experience with {', '.join(matched_jd_skills[:3])} near the top of your resume."
+                    if matched_jd_skills
+                    else "Highlight your most relevant technical skills near the top of your resume."
+                ),
+                (
+                    f"Add experience with {missing_jd_skills[0]} ONLY if you genuinely have used it in prior projects or coursework."
+                    if missing_jd_skills
+                    else "Tailor project descriptions to closely match keywords in the targeted job description."
+                ),
             ]
         )
 
     # Content Score calculation
     content_score = 78
-    if len(bullet_candidates) >= 4: content_score += 5
-    if len(all_matched) >= 6: content_score += 7
-    if sections_map.get("summary"): content_score += 5
+    if len(bullet_candidates) >= 4:
+        content_score += 5
+    if len(all_matched) >= 6:
+        content_score += 7
+    if sections_map.get("summary"):
+        content_score += 5
     content_score = min(98, max(50, content_score))
 
     # Overall Score formula (weighted average)
@@ -227,7 +286,8 @@ def generate_mock_fallback_analysis(
     if sections_map.get("education"):
         strengths.append("Clearly stated Education section.")
     if len(all_matched) >= 5:
-        strengths.append(f"Demonstrates relevant tech stack keywords ({', '.join(all_matched[:4])}).")
+        strengths.append(
+            f"Demonstrates relevant tech stack keywords ({', '.join(all_matched[:4])}).")
 
     problems = [
         "Some bullet points lack quantifiable business or technical metrics.",
@@ -260,10 +320,11 @@ def generate_mock_fallback_analysis(
         text_length=pdf_meta.get("character_count", 0)
     )
 
+
 def analyze_resume_with_gemini(
-    pdf_meta: Dict[str, Any],
-    job_description: Optional[str] = None,
-    filename: Optional[str] = None
+    pdf_meta: dict[str, Any],
+    job_description: str | None = None,
+    filename: str | None = None
 ) -> ResumeAnalysisResponse:
     """
     Main entry point for analyzing a resume.
@@ -272,10 +333,12 @@ def analyze_resume_with_gemini(
     Deterministic Privacy Guardrail: All Personally Identifiable Information (PII) is redacted BEFORE external AI processing.
     """
     pdf_meta["filename"] = filename
-    structure_score, ats_score, sections_map, section_details, ats_issues = analyze_structure_and_ats(pdf_meta)
+    structure_score, ats_score, sections_map, section_details, ats_issues = analyze_structure_and_ats(
+        pdf_meta)
     resume_text = pdf_meta["text"]
 
-    # Deterministic Privacy Guardrail: Detect and redact PII before external AI processing
+    # Deterministic Privacy Guardrail: Detect and redact PII before external
+    # AI processing
     redacted_resume_text, _ = redact_pii(resume_text)
     redacted_job_description = None
     if job_description:
@@ -283,7 +346,8 @@ def analyze_resume_with_gemini(
 
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
 
-    # If no valid API key is set, use intelligent mock response with sanitized text
+    # If no valid API key is set, use intelligent mock response with sanitized
+    # text
     if not api_key or api_key == "your_gemini_api_key_here":
         return generate_mock_fallback_analysis(
             text=redacted_resume_text,
@@ -379,10 +443,11 @@ def analyze_resume_with_gemini(
         )
 
         data = json.loads(response.text)
-        
+
         # Combine deterministic scores with AI output
         c_score = data.get("content_score", 78)
-        overall_score = int((structure_score * 0.25) + (ats_score * 0.35) + (c_score * 0.40))
+        overall_score = int((structure_score * 0.25) +
+                            (ats_score * 0.35) + (c_score * 0.40))
 
         # Parse improvements into objects with defense-in-depth PII redaction
         improvements_list = []
@@ -424,7 +489,7 @@ def analyze_resume_with_gemini(
             )
 
         kw_data = data.get("keywords", {})
-        
+
         return ResumeAnalysisResponse(
             overall_score=overall_score,
             structure_score=structure_score,
@@ -452,7 +517,8 @@ def analyze_resume_with_gemini(
     except Exception as e:
         safe_msg = sanitize_log_message(str(e))
         import logging
-        logging.getLogger("resume_analyzer").warning(f"Gemini API call failed or unparseable: {safe_msg}. Falling back to heuristic analysis.")
+        logging.getLogger("resume_analyzer").warning(
+            f"Gemini API call failed or unparseable: {safe_msg}. Falling back to heuristic analysis.")
         return generate_mock_fallback_analysis(
             text=redacted_resume_text,
             pdf_meta=pdf_meta,

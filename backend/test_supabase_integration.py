@@ -1,17 +1,19 @@
+from services.supabase_service import check_supabase_connection, get_supabase_client
+from services.pdf_parser import extract_resume_text
+from main import app
+import pymupdf as fitz
 import os
 import sys
 import unittest
+
 from fastapi.testclient import TestClient
 
 # Ensure backend directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from main import app
-from services.supabase_service import get_supabase_client, check_supabase_connection
-from services.pdf_parser import extract_resume_text
-import pymupdf as fitz
 
 client = TestClient(app)
+
 
 class TestSupabaseIntegration(unittest.TestCase):
 
@@ -37,7 +39,8 @@ class TestSupabaseIntegration(unittest.TestCase):
         # 1. Test /api/analyze-resume without token
         doc = fitz.open()
         page = doc.new_page()
-        page.insert_text((50, 50), "Test Resume Content with Skills", fontsize=10)
+        page.insert_text(
+            (50, 50), "Test Resume Content with Skills", fontsize=10)
         pdf_bytes = doc.write()
         doc.close()
 
@@ -46,7 +49,11 @@ class TestSupabaseIntegration(unittest.TestCase):
             files={"resume": ("test.pdf", pdf_bytes, "application/pdf")}
         )
         self.assertEqual(res_analyze.status_code, 401)
-        self.assertIn("Authentication token required", res_analyze.json().get("detail", ""))
+        self.assertIn(
+            "Authentication token required",
+            res_analyze.json().get(
+                "detail",
+                ""))
 
         # 2. Test /api/history without token
         res_history = client.get("/api/history")
@@ -62,6 +69,7 @@ class TestSupabaseIntegration(unittest.TestCase):
         self.assertIn("Full Stack", meta["text"])
         self.assertTrue(meta["contact_info"]["has_email"])
         print("✓ In-memory PDF text extraction verified.")
+
 
 if __name__ == "__main__":
     unittest.main()

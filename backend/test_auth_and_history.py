@@ -22,7 +22,6 @@ This file is preserved for historical reference only.
 """
 
 import os
-import io
 import sys
 import unittest
 
@@ -34,22 +33,17 @@ import unittest
 LEGACY_MODULES_AVAILABLE = False
 try:
     sys.path.insert(0, os.path.dirname(__file__))
-    from database import engine, Base, SessionLocal  # noqa: F401
-    from models import User, ResumeAnalysis, PasswordResetToken  # noqa: F401
+    from database import Base, SessionLocal, engine
+    from models import PasswordResetToken, ResumeAnalysis, User
     LEGACY_MODULES_AVAILABLE = True
 except ImportError:
-    pass
+    Base = SessionLocal = engine = None
+    PasswordResetToken = ResumeAnalysis = User = None
 
 SKIP_REASON = (
     "Skipped: Legacy test requires 'database', 'models', and 'security' modules "
     "from the pre-Supabase architecture which are no longer present."
 )
-
-if not LEGACY_MODULES_AVAILABLE:
-    # Provide stubs so the rest of the file parses without NameError
-    engine = Base = SessionLocal = None
-    User = ResumeAnalysis = PasswordResetToken = None
-
 
 
 @unittest.skipUnless(LEGACY_MODULES_AVAILABLE, SKIP_REASON)

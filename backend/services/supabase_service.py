@@ -1,26 +1,37 @@
-import os
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, List
+import os
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from supabase import create_client, Client
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from services.privacy_guardrail import sanitize_log_message
+
+from supabase import Client, create_client
 
 logger = logging.getLogger("supabase_service")
 
 DEFAULT_SUPABASE_URL = "https://mykmvgdrzvcoydpliwhr.supabase.co"
-DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15a212Z2RyenZjb3lkcGxpd2hyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNTkxMTEsImV4cCI6MjEwNzYzNTExMX0.pHOXwng1vC6y_BhvLRYprftXl4QxRw3_xitZrkadOv0"
-DEFAULT_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15a212Z2RyenZjb3lkcGxpd2hyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA1OTExMSwiZXhwIjoyMTA3NjM1MTExfQ.HZffIBf6JIVK791deiMGj1HNGZO259GoaMYeoC1OtgI"
+DEFAULT_SUPABASE_KEY = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15a212Z2RyenZjb3lkcGxpd2hyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNTkxMTEsImV4cCI6MjEwNzYzNTExMX0."
+    "pHOXwng1vC6y_BhvLRYprftXl4QxRw3_xitZrkadOv0"
+)
+DEFAULT_SERVICE_KEY = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im15a212Z2RyenZjb3lkcGxpd2hyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MjA1OTExMSwiZXhwIjoyMTA3NjM1MTExfQ."
+    "HZffIBf6JIVK791deiMGj1HNGZO259GoaMYeoC1OtgI"
+)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip() or DEFAULT_SUPABASE_URL
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip() or DEFAULT_SUPABASE_KEY
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or DEFAULT_SERVICE_KEY
+SUPABASE_SERVICE_ROLE_KEY = os.getenv(
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "").strip() or DEFAULT_SERVICE_KEY
 
 # Fallback to SUPABASE_KEY if service role key not provided
 SERVICE_KEY = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY
 
-_client: Optional[Client] = None
+_client: Client | None = None
+
 
 def get_supabase_client() -> Client:
     """Singleton getter for Supabase client."""
@@ -37,8 +48,12 @@ def get_supabase_client() -> Client:
         _client = create_client(SUPABASE_URL, SERVICE_KEY)
         return _client
     except Exception as e:
-        logger.error(f"Failed to initialize Supabase client: {sanitize_log_message(str(e))}")
-        raise RuntimeError("Could not connect to Supabase. Check your credentials.")
+        logger.error(
+            f"Failed to initialize Supabase client: {
+                sanitize_log_message(
+                    str(e))}")
+        raise RuntimeError(
+            "Could not connect to Supabase. Check your credentials.")
 
 
 def get_admin_client() -> Client:
@@ -54,8 +69,8 @@ security_bearer = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer)
-) -> Dict[str, Any]:
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_bearer)
+) -> dict[str, Any]:
     """
     Validates the Bearer token with Supabase Auth and returns the authenticated user object.
     """
@@ -91,7 +106,10 @@ async def get_current_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"Supabase auth token verification error: {sanitize_log_message(str(e))}")
+        logger.warning(
+            f"Supabase auth token verification error: {
+                sanitize_log_message(
+                    str(e))}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed. Invalid or expired token.",
@@ -102,13 +120,13 @@ async def get_current_user(
 def save_resume_analysis(
     user_id: str,
     resume_name: str,
-    job_title: Optional[str],
+    job_title: str | None,
     ats_score: int,
-    structure_score: Optional[int],
-    content_score: Optional[int],
-    job_match_score: Optional[int],
-    analysis_summary: Dict[str, Any],
-) -> Dict[str, Any]:
+    structure_score: int | None,
+    content_score: int | None,
+    job_match_score: int | None,
+    analysis_summary: dict[str, Any],
+) -> dict[str, Any]:
     """
     Saves an ATS analysis record to the Supabase resume_analyses table.
     """
@@ -131,7 +149,9 @@ def save_resume_analysis(
         return payload
     except Exception as e:
         err_msg = str(e)
-        logger.error(f"Error saving analysis to Supabase: {sanitize_log_message(err_msg)}")
+        logger.error(
+            f"Error saving analysis to Supabase: {
+                sanitize_log_message(err_msg)}")
         # Check if table missing
         if "PGRST205" in err_msg or "schema cache" in err_msg:
             raise HTTPException(
@@ -144,7 +164,7 @@ def save_resume_analysis(
         )
 
 
-def get_user_analyses(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+def get_user_analyses(user_id: str, limit: int = 50) -> list[dict[str, Any]]:
     """
     Fetches the resume analysis history for a specific user from Supabase.
     """
@@ -161,7 +181,9 @@ def get_user_analyses(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         return res.data or []
     except Exception as e:
         err_msg = str(e)
-        logger.error(f"Error fetching history from Supabase: {sanitize_log_message(err_msg)}")
+        logger.error(
+            f"Error fetching history from Supabase: {
+                sanitize_log_message(err_msg)}")
         if "PGRST205" in err_msg or "schema cache" in err_msg:
             return []
         raise HTTPException(
@@ -170,7 +192,8 @@ def get_user_analyses(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         )
 
 
-def get_analysis_by_id(analysis_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+def get_analysis_by_id(
+        analysis_id: str, user_id: str) -> dict[str, Any] | None:
     """
     Fetches detailed analysis for a specific item belonging to the authenticated user.
     """
@@ -187,7 +210,9 @@ def get_analysis_by_id(analysis_id: str, user_id: str) -> Optional[Dict[str, Any
         return res.data
     except Exception as e:
         err_msg = str(e)
-        logger.error(f"Error fetching analysis detail: {sanitize_log_message(err_msg)}")
+        logger.error(
+            f"Error fetching analysis detail: {
+                sanitize_log_message(err_msg)}")
         return None
 
 
@@ -206,18 +231,21 @@ def delete_analysis_by_id(analysis_id: str, user_id: str) -> bool:
         )
         return bool(res.data)
     except Exception as e:
-        logger.error(f"Error deleting analysis record: {sanitize_log_message(str(e))}")
+        logger.error(
+            f"Error deleting analysis record: {
+                sanitize_log_message(
+                    str(e))}")
         return False
 
 
-def check_supabase_connection() -> Dict[str, Any]:
+def check_supabase_connection() -> dict[str, Any]:
     """
     Health check helper for Supabase service.
     """
     try:
         client = get_supabase_client()
         # Verify auth endpoint responsive
-        settings = client.auth.get_user("dummy_check_health_token")
+        client.auth.get_user("dummy_check_health_token")
     except Exception as e:
         err = str(e)
         # 401 or invalid token means the Supabase auth server responded!
@@ -231,7 +259,7 @@ def check_supabase_connection() -> Dict[str, Any]:
 # Email Verification OTP Management
 # ==============================================================================
 
-_in_memory_otp_cache: Dict[str, Dict[str, Any]] = {}
+_in_memory_otp_cache: dict[str, dict[str, Any]] = {}
 
 
 def save_otp_record(
@@ -239,16 +267,18 @@ def save_otp_record(
     otp_hash: str,
     purpose: str = "email_verification",
     expires_in_seconds: int = 600,
-    expires_in_minutes: Optional[int] = None,
+    expires_in_minutes: int | None = None,
     max_attempts: int = 5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Saves or updates an OTP verification record in Supabase email_verifications table,
     with an in-memory cache for resilience.
     """
     clean_email = email.lower().strip()
-    now = datetime.now(timezone.utc)
-    sec = (expires_in_minutes * 60) if expires_in_minutes is not None else expires_in_seconds
+    now = datetime.now(UTC)
+    sec = (
+        expires_in_minutes *
+        60) if expires_in_minutes is not None else expires_in_seconds
     expires_at = now + timedelta(seconds=sec)
 
     record = {
@@ -270,17 +300,23 @@ def save_otp_record(
     try:
         admin_client = get_admin_client()
         # Invalidate previous unconsumed records for this email and purpose
-        admin_client.table("email_verifications").update({"consumed": True}).eq("email", clean_email).eq("purpose", purpose).eq("consumed", False).execute()
-        res = admin_client.table("email_verifications").insert(record).execute()
+        admin_client.table("email_verifications").update({"consumed": True}).eq(
+            "email", clean_email).eq("purpose", purpose).eq("consumed", False).execute()
+        res = admin_client.table(
+            "email_verifications").insert(record).execute()
         if res.data and len(res.data) > 0:
             return res.data[0]
     except Exception as e:
-        logger.warning(f"Notice: Supabase email_verifications insert notice: {sanitize_log_message(str(e))}. In-memory fallback active.")
+        logger.warning(
+            f"Notice: Supabase email_verifications insert notice: {
+                sanitize_log_message(
+                    str(e))}. In-memory fallback active.")
 
     return record
 
 
-def get_active_otp_record(email: str, purpose: str = "email_verification") -> Optional[Dict[str, Any]]:
+def get_active_otp_record(
+        email: str, purpose: str = "email_verification") -> dict[str, Any] | None:
     """
     Retrieves the current active (unconsumed) OTP record for this email and purpose.
     """
@@ -302,7 +338,10 @@ def get_active_otp_record(email: str, purpose: str = "email_verification") -> Op
         if res.data and len(res.data) > 0:
             return res.data[0]
     except Exception as e:
-        logger.debug(f"Querying email_verifications table notice: {sanitize_log_message(str(e))}")
+        logger.debug(
+            f"Querying email_verifications table notice: {
+                sanitize_log_message(
+                    str(e))}")
 
     # 2. Check local memory cache
     cached = _in_memory_otp_cache.get(f"{clean_email}:{purpose}")
@@ -312,14 +351,16 @@ def get_active_otp_record(email: str, purpose: str = "email_verification") -> Op
     return None
 
 
-def increment_otp_attempt(record_id: Optional[str], email: str, purpose: str = "email_verification") -> int:
+def increment_otp_attempt(record_id: str | None, email: str,
+                          purpose: str = "email_verification") -> int:
     """
     Increments the failed verification attempt count.
     """
     clean_email = email.lower().strip()
     key = f"{clean_email}:{purpose}"
     if key in _in_memory_otp_cache:
-        _in_memory_otp_cache[key]["attempts"] = _in_memory_otp_cache[key].get("attempts", 0) + 1
+        _in_memory_otp_cache[key]["attempts"] = _in_memory_otp_cache[key].get(
+            "attempts", 0) + 1
         new_attempts = _in_memory_otp_cache[key]["attempts"]
     else:
         new_attempts = 1
@@ -327,14 +368,19 @@ def increment_otp_attempt(record_id: Optional[str], email: str, purpose: str = "
     if record_id:
         try:
             admin_client = get_admin_client()
-            admin_client.table("email_verifications").update({"attempts": new_attempts}).eq("id", record_id).execute()
+            admin_client.table("email_verifications").update(
+                {"attempts": new_attempts}).eq("id", record_id).execute()
         except Exception as e:
-            logger.debug(f"Updating attempts in Supabase notice: {sanitize_log_message(str(e))}")
+            logger.debug(
+                f"Updating attempts in Supabase notice: {
+                    sanitize_log_message(
+                        str(e))}")
 
     return new_attempts
 
 
-def mark_otp_consumed(record_id: Optional[str], email: str, purpose: str = "email_verification") -> None:
+def mark_otp_consumed(record_id: str | None, email: str,
+                      purpose: str = "email_verification") -> None:
     """
     Marks the OTP record as consumed to prevent replay attacks.
     """
@@ -346,16 +392,19 @@ def mark_otp_consumed(record_id: Optional[str], email: str, purpose: str = "emai
     if record_id:
         try:
             admin_client = get_admin_client()
-            admin_client.table("email_verifications").update({"consumed": True}).eq("id", record_id).execute()
+            admin_client.table("email_verifications").update(
+                {"consumed": True}).eq("id", record_id).execute()
         except Exception as e:
-            logger.debug(f"Marking OTP consumed in Supabase notice: {sanitize_log_message(str(e))}")
+            logger.debug(
+                f"Marking OTP consumed in Supabase notice: {
+                    sanitize_log_message(
+                        str(e))}")
 
 
 def mark_user_email_verified(user_id: str, email: str) -> None:
     """
     Marks the user account as verified across Supabase Auth and public profiles.
     """
-    clean_email = email.lower().strip()
     admin_client = get_admin_client()
     try:
         admin_client.auth.admin.update_user_by_id(
@@ -366,9 +415,13 @@ def mark_user_email_verified(user_id: str, email: str) -> None:
             }
         )
     except Exception as e:
-        logger.error(f"Error marking user email confirmed in Auth: {sanitize_log_message(str(e))}")
+        logger.error(
+            f"Error marking user email confirmed in Auth: {
+                sanitize_log_message(
+                    str(e))}")
 
     try:
-        admin_client.table("profiles").update({"email_verified": True}).eq("id", user_id).execute()
+        admin_client.table("profiles").update(
+            {"email_verified": True}).eq("id", user_id).execute()
     except Exception as e:
         logger.debug(f"Profiles update notice: {sanitize_log_message(str(e))}")

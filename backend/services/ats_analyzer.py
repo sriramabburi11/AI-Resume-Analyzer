@@ -1,5 +1,6 @@
 import re
-from typing import Dict, Any, List, Tuple
+from typing import Any
+
 from schemas.resume_schema import ATSIssue, SectionDetail
 
 STANDARD_SECTION_PATTERNS = {
@@ -25,7 +26,9 @@ NON_STANDARD_HEADINGS_MAP = {
     "about me": ("Professional Summary", "Using 'Professional Summary' communicates career intent more clearly to recruiters and ATS."),
 }
 
-def analyze_structure_and_ats(pdf_meta: Dict[str, Any]) -> Tuple[int, int, Dict[str, bool], List[SectionDetail], List[ATSIssue]]:
+
+def analyze_structure_and_ats(
+        pdf_meta: dict[str, Any]) -> tuple[int, int, dict[str, bool], list[SectionDetail], list[ATSIssue]]:
     """
     Evaluates resume structure and estimated ATS compatibility deterministically.
     Returns (structure_score, ats_score, sections_map, section_details, ats_issues).
@@ -36,7 +39,7 @@ def analyze_structure_and_ats(pdf_meta: Dict[str, Any]) -> Tuple[int, int, Dict[
     # 1. Section Analysis
     sections_map = {}
     section_details = []
-    
+
     # Check for presence of each section
     for section_key, patterns in STANDARD_SECTION_PATTERNS.items():
         found = False
@@ -47,21 +50,19 @@ def analyze_structure_and_ats(pdf_meta: Dict[str, Any]) -> Tuple[int, int, Dict[
                 found = True
                 heading_used = match.group(0).title()
                 break
-        
+
         sections_map[section_key] = found
-        
+
         rec = None
-        reason = None
         if not found:
-            if section_key in ["contact", "education", "skills", "experience", "projects"]:
+            if section_key in ["contact", "education",
+                               "skills", "experience", "projects"]:
                 rec = f"Add a dedicated '{section_key.title()}' section."
-                reason = f"The '{section_key.title()}' section is a core standard component for technical resumes."
         else:
             # Check for non-standard heading usage
             if heading_used and heading_used.lower() in NON_STANDARD_HEADINGS_MAP:
-                std, exp = NON_STANDARD_HEADINGS_MAP[heading_used.lower()]
+                std, _ = NON_STANDARD_HEADINGS_MAP[heading_used.lower()]
                 rec = f"Change heading to '{std}'."
-                reason = exp
 
         section_details.append(SectionDetail(
             name=section_key.title(),
@@ -71,14 +72,21 @@ def analyze_structure_and_ats(pdf_meta: Dict[str, Any]) -> Tuple[int, int, Dict[
         ))
 
     # Calculate Structure Score (out of 100)
-    # Core sections weight: contact(20), education(15), skills(20), experience/projects(25), summary(10), certifications/others(10)
+    # Core sections weight: contact(20), education(15), skills(20),
+    # experience/projects(25), summary(10), certifications/others(10)
     structure_score = 40  # base
-    if sections_map.get("contact"): structure_score += 15
-    if sections_map.get("education"): structure_score += 10
-    if sections_map.get("skills"): structure_score += 15
-    if sections_map.get("experience") or sections_map.get("projects"): structure_score += 10
-    if sections_map.get("summary"): structure_score += 5
-    if sections_map.get("certifications") or sections_map.get("achievements"): structure_score += 5
+    if sections_map.get("contact"):
+        structure_score += 15
+    if sections_map.get("education"):
+        structure_score += 10
+    if sections_map.get("skills"):
+        structure_score += 15
+    if sections_map.get("experience") or sections_map.get("projects"):
+        structure_score += 10
+    if sections_map.get("summary"):
+        structure_score += 5
+    if sections_map.get("certifications") or sections_map.get("achievements"):
+        structure_score += 5
 
     # Check for custom non-standard headings in text
     non_standard_found = False
@@ -90,7 +98,7 @@ def analyze_structure_and_ats(pdf_meta: Dict[str, Any]) -> Tuple[int, int, Dict[
     structure_score = min(100, max(0, structure_score))
 
     # 2. ATS Issues Check
-    ats_issues: List[ATSIssue] = []
+    ats_issues: list[ATSIssue] = []
     ats_score = 100
 
     # Issue 1: Multi-column layout
@@ -125,11 +133,14 @@ def analyze_structure_and_ats(pdf_meta: Dict[str, Any]) -> Tuple[int, int, Dict[
     if not contact_info.get("has_email") or not contact_info.get("has_phone"):
         ats_score -= 15
         missing_parts = []
-        if not contact_info.get("has_email"): missing_parts.append("Email")
-        if not contact_info.get("has_phone"): missing_parts.append("Phone Number")
+        if not contact_info.get("has_email"):
+            missing_parts.append("Email")
+        if not contact_info.get("has_phone"):
+            missing_parts.append("Phone Number")
         ats_issues.append(ATSIssue(
             type="fail",
-            issue=f"Missing essential contact info ({', '.join(missing_parts)})",
+            issue=f"Missing essential contact info ({
+                ', '.join(missing_parts)})",
             detail="Recruiters and ATS parsers require clear email and phone contact details at the top."
         ))
     else:
@@ -155,7 +166,9 @@ def analyze_structure_and_ats(pdf_meta: Dict[str, Any]) -> Tuple[int, int, Dict[
         ))
 
     # Issue 6: Date formats check
-    date_patterns = re.findall(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|[0-9]{2})?[\s\./\-]*(?:20\d{2}|19\d{2})\b', text)
+    date_patterns = re.findall(
+        r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|[0-9]{2})?[\s\./\-]*(?:20\d{2}|19\d{2})\b',
+        text)
     if len(date_patterns) < 2:
         ats_score -= 8
         ats_issues.append(ATSIssue(

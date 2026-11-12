@@ -1,7 +1,6 @@
-import re
-import os
 import logging
-from typing import Dict, Any, List, Tuple, Optional
+import re
+
 import pymupdf as fitz
 
 logger = logging.getLogger("privacy_guardrail")
@@ -24,7 +23,8 @@ EMAIL_PATTERN = re.compile(
 )
 
 # 2. Government IDs:
-# 2a. Indian Aadhaar: 12 digits, often 4-4-4 separated by space or hyphen, or labeled
+# 2a. Indian Aadhaar: 12 digits, often 4-4-4 separated by space or hyphen,
+# or labeled
 AADHAAR_PATTERN = re.compile(
     r'\b[2-9]\d{3}[\s-]\d{4}[\s-]\d{4}\b'
 )
@@ -43,7 +43,8 @@ SSN_PATTERN = re.compile(
 )
 
 # 3. Passport numbers:
-# Indian / standard passport: 1 letter followed by 7 digits, or labeled passport number
+# Indian / standard passport: 1 letter followed by 7 digits, or labeled
+# passport number
 PASSPORT_LABELED_PATTERN = re.compile(
     r'(?i)\b(?:passport(?:\s*(?:no|number|#))?[:\s]+)([A-PR-WYa-pr-wy][0-9]{7,8})\b'
 )
@@ -52,7 +53,8 @@ PASSPORT_PATTERN = re.compile(
 )
 
 # 4. Phone numbers:
-# Covers international format with +country code, US (xxx) xxx-xxxx, and 10-digit mobile
+# Covers international format with +country code, US (xxx) xxx-xxxx, and
+# 10-digit mobile
 PHONE_INTERNATIONAL_PATTERN = re.compile(
     r'(?:\+\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'
 )
@@ -79,6 +81,7 @@ POSTAL_CODE_LABELED_PATTERN = re.compile(
 
 class PrivacyValidationError(Exception):
     """Exception raised when input fails deterministic privacy or security validation."""
+
     def __init__(self, message: str, status_code: int = 400):
         super().__init__(message)
         self.message = message
@@ -87,8 +90,8 @@ class PrivacyValidationError(Exception):
 
 def validate_uploaded_file(
     contents: bytes,
-    filename: Optional[str] = None,
-    content_type: Optional[str] = None
+    filename: str | None = None,
+    content_type: str | None = None
 ) -> None:
     """
     Deterministic security and format validation for uploaded resume files.
@@ -110,12 +113,15 @@ def validate_uploaded_file(
 
     if len(contents) > MAX_FILE_SIZE_BYTES:
         raise PrivacyValidationError(
-            f"File size exceeds the maximum allowed limit of {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB.",
+            f"File size exceeds the maximum allowed limit of {
+                MAX_FILE_SIZE_BYTES // (
+                    1024 * 1024)} MB.",
             status_code=400
         )
 
     # 3. Magic bytes inspection: must match PDF signature (%PDF-)
-    # A genuine PDF starts with %PDF (or within the first 1024 bytes per PDF standard)
+    # A genuine PDF starts with %PDF (or within the first 1024 bytes per PDF
+    # standard)
     header_chunk = contents[:1024]
     if b"%PDF" not in header_chunk:
         raise PrivacyValidationError(
@@ -124,8 +130,10 @@ def validate_uploaded_file(
         )
 
     # 4. Executable & Polyglot header detection
-    # Reject DOS/PE executable ('MZ'), ELF binaries ('\x7fELF'), Java class / Mach-O files
-    if contents.startswith(b"MZ") or contents.startswith(b"\x7fELF") or contents.startswith(b"\xca\xfe\xba\xbe"):
+    # Reject DOS/PE executable ('MZ'), ELF binaries ('\x7fELF'), Java class /
+    # Mach-O files
+    if contents.startswith(b"MZ") or contents.startswith(
+            b"\x7fELF") or contents.startswith(b"\xca\xfe\xba\xbe"):
         raise PrivacyValidationError(
             "Executable or polyglot files are strictly rejected for security.",
             status_code=400
@@ -143,18 +151,19 @@ def validate_uploaded_file(
         doc = fitz.open(stream=contents, filetype="pdf")
         if doc.page_count == 0:
             doc.close()
-            raise PrivacyValidationError("PDF document contains 0 pages.", status_code=400)
+            raise PrivacyValidationError(
+                "PDF document contains 0 pages.", status_code=400)
         doc.close()
     except PrivacyValidationError:
         raise
-    except Exception as e:
+    except Exception:
         raise PrivacyValidationError(
-            f"Unable to read or parse PDF structure: corrupted or malformed file.",
+            "Unable to read or parse PDF structure: corrupted or malformed file.",
             status_code=422
         )
 
 
-def validate_job_description(job_description: Optional[str]) -> Optional[str]:
+def validate_job_description(job_description: str | None) -> str | None:
     """
     Validates optional job description input to prevent excessive prompt bloat or abuse.
     """
@@ -174,12 +183,12 @@ def validate_job_description(job_description: Optional[str]) -> Optional[str]:
     return cleaned
 
 
-def detect_pii(text: str) -> Dict[str, List[str]]:
+def detect_pii(text: str) -> dict[str, list[str]]:
     """
     Detects Personally Identifiable Information (PII) deterministically in the given text.
     Returns a dictionary of categorized detected items.
     """
-    detected: Dict[str, List[str]] = {
+    detected: dict[str, list[str]] = {
         "emails": [],
         "phones": [],
         "government_ids": [],
@@ -198,14 +207,18 @@ def detect_pii(text: str) -> Dict[str, List[str]]:
     aadhaar_matches = AADHAAR_PATTERN.findall(text)
     for m in AADHAAR_LABELED_PATTERN.finditer(text):
         aadhaar_matches.append(m.group(1))
-    
+
     # Government IDs: PAN
     pan_matches = PAN_PATTERN.findall(text)
 
     # Government IDs: SSN
     ssn_matches = SSN_PATTERN.findall(text)
 
-    detected["government_ids"] = list(dict.fromkeys(aadhaar_matches + pan_matches + ssn_matches))
+    detected["government_ids"] = list(
+        dict.fromkeys(
+            aadhaar_matches +
+            pan_matches +
+            ssn_matches))
 
     # Passports
     passport_matches = []
@@ -222,7 +235,7 @@ def detect_pii(text: str) -> Dict[str, List[str]]:
         phone_matches.append(m.group(1).strip())
     phone_matches.extend(PHONE_INTERNATIONAL_PATTERN.findall(text))
     phone_matches.extend(PHONE_INDIAN_PATTERN.findall(text))
-    
+
     # Filter out false positives (e.g. 4-digit years)
     clean_phones = []
     for p in phone_matches:
@@ -243,7 +256,7 @@ def detect_pii(text: str) -> Dict[str, List[str]]:
     return detected
 
 
-def redact_pii(text: str) -> Tuple[str, Dict[str, int]]:
+def redact_pii(text: str) -> tuple[str, dict[str, int]]:
     """
     Deterministic PII Redaction Engine.
     Replaces sensitive personal identifiers with meaningful placeholders before external AI calls.
@@ -253,7 +266,7 @@ def redact_pii(text: str) -> Tuple[str, Dict[str, int]]:
         return "", {}
 
     redacted = text
-    counts: Dict[str, int] = {
+    counts: dict[str, int] = {
         "emails": 0,
         "phones": 0,
         "government_ids": 0,
@@ -286,7 +299,12 @@ def redact_pii(text: str) -> Tuple[str, Dict[str, int]]:
     # 2c. PAN Cards
     pan_matches = list(set(PAN_PATTERN.findall(redacted)))
     for p in pan_matches:
-        redacted = re.sub(r'\b' + re.escape(p) + r'\b', REDACTED_GOV_ID, redacted)
+        redacted = re.sub(
+            r'\b' +
+            re.escape(p) +
+            r'\b',
+            REDACTED_GOV_ID,
+            redacted)
         counts["government_ids"] += 1
 
     # 2d. US SSN
@@ -308,7 +326,12 @@ def redact_pii(text: str) -> Tuple[str, Dict[str, int]]:
     for pass_no in passport_matches:
         # Avoid redacting placeholders or non-passports
         if not pass_no.startswith("[") and not pass_no.endswith("]"):
-            redacted = re.sub(r'\b' + re.escape(pass_no) + r'\b', REDACTED_PASSPORT, redacted)
+            redacted = re.sub(
+                r'\b' +
+                re.escape(pass_no) +
+                r'\b',
+                REDACTED_PASSPORT,
+                redacted)
             counts["passports"] += 1
 
     # 4. Redact Phones
@@ -322,10 +345,12 @@ def redact_pii(text: str) -> Tuple[str, Dict[str, int]]:
     redacted = PHONE_LABELED_PATTERN.sub(replace_phone_labeled, redacted)
 
     # 4b. International and Indian phones
-    phone_candidates = list(set(PHONE_INTERNATIONAL_PATTERN.findall(redacted) + PHONE_INDIAN_PATTERN.findall(redacted)))
+    phone_candidates = list(set(PHONE_INTERNATIONAL_PATTERN.findall(
+        redacted) + PHONE_INDIAN_PATTERN.findall(redacted)))
     for ph in phone_candidates:
         digits_only = re.sub(r'\D', '', ph)
-        # Verify it contains at least 10 digits to avoid redacting short numbers/years
+        # Verify it contains at least 10 digits to avoid redacting short
+        # numbers/years
         if len(digits_only) >= 10:
             redacted = re.sub(re.escape(ph), REDACTED_PHONE, redacted)
             counts["phones"] += 1
@@ -369,8 +394,14 @@ def sanitize_log_message(msg: str) -> str:
     sanitized = PAN_PATTERN.sub("[ID_MASKED]", sanitized)
     sanitized = SSN_PATTERN.sub("[ID_MASKED]", sanitized)
     # Mask Bearer tokens
-    sanitized = re.sub(r'Bearer\s+[A-Za-z0-9_\-\.]+', 'Bearer [TOKEN_MASKED]', sanitized)
+    sanitized = re.sub(
+        r'Bearer\s+[A-Za-z0-9_\-\.]+',
+        'Bearer [TOKEN_MASKED]',
+        sanitized)
     # Mask JWTs
-    sanitized = re.sub(r'eyJ[a-zA-Z0-9_\-]+\.eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+', '[JWT_MASKED]', sanitized)
+    sanitized = re.sub(
+        r'eyJ[a-zA-Z0-9_\-]+\.eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+',
+        '[JWT_MASKED]',
+        sanitized)
 
     return sanitized

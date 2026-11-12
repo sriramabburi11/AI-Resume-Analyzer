@@ -1,12 +1,13 @@
+import hashlib
+import hmac
+import logging
 import os
 import secrets
-import hmac
-import hashlib
-import logging
 import smtplib
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Optional, Dict, Any
+from email.mime.text import MIMEText
+from typing import Any
+
 import requests
 from services.privacy_guardrail import sanitize_log_message
 
@@ -17,16 +18,26 @@ SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587").strip() or "587")
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
-SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "").strip() or SMTP_USER or "noreply@resumepulse.com"
+SMTP_FROM_EMAIL = os.getenv(
+    "SMTP_FROM_EMAIL",
+    "").strip() or SMTP_USER or "noreply@resumepulse.com"
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "AI Resume Analyzer").strip()
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
+SMTP_USE_TLS = os.getenv(
+    "SMTP_USE_TLS",
+    "true").lower() in (
+        "true",
+        "1",
+    "yes")
 
 # Resend API Alternative
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
-RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "").strip() or "onboarding@resend.dev"
+RESEND_FROM_EMAIL = os.getenv(
+    "RESEND_FROM_EMAIL",
+    "").strip() or "onboarding@resend.dev"
 
 # HMAC Secret for OTP Hashing
-OTP_HASH_SECRET = os.getenv("OTP_SECRET_KEY", "").strip() or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "resume_analyzer_secure_otp_salt_2026")
+OTP_HASH_SECRET = os.getenv("OTP_SECRET_KEY", "").strip() or os.getenv(
+    "SUPABASE_SERVICE_ROLE_KEY", "resume_analyzer_secure_otp_salt_2026")
 
 
 def generate_secure_otp(length: int = 6) -> str:
@@ -41,12 +52,13 @@ def hash_otp(email: str, otp: str, purpose: str = "email_verification") -> str:
     Generates a cryptographically secure HMAC-SHA256 digest of the OTP.
     Ensures that plain OTPs are never stored in the database.
     """
-    message = f"{email.lower().strip()}:{otp.strip()}:{purpose}".encode("utf-8")
+    message = f"{email.lower().strip()}:{otp.strip()}:{purpose}".encode()
     key = OTP_HASH_SECRET.encode("utf-8")
     return hmac.new(key, message, hashlib.sha256).hexdigest()
 
 
-def verify_otp_hash(email: str, input_otp: str, stored_hash: str, purpose: str = "email_verification") -> bool:
+def verify_otp_hash(email: str, input_otp: str, stored_hash: str,
+                    purpose: str = "email_verification") -> bool:
     """
     Constant-time comparison of the computed OTP hash against the stored hash.
     Protects against timing attacks.
@@ -55,7 +67,7 @@ def verify_otp_hash(email: str, input_otp: str, stored_hash: str, purpose: str =
     return hmac.compare_digest(computed, stored_hash)
 
 
-def build_verification_html(otp: str, full_name: Optional[str] = None) -> str:
+def build_verification_html(otp: str, full_name: str | None = None) -> str:
     """
     Builds a responsive, accessible HTML email template for the verification code.
     """
@@ -71,7 +83,8 @@ def build_verification_html(otp: str, full_name: Optional[str] = None) -> str:
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 32px 16px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="100%" style="max-width: 540px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); overflow: hidden;">
+        <table role="presentation" width="100%"
+               style="max-width: 540px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); overflow: hidden;">
           <!-- Header -->
           <tr>
             <td style="background-color: #2563eb; padding: 28px 32px; text-align: center;">
@@ -86,7 +99,7 @@ def build_verification_html(otp: str, full_name: Optional[str] = None) -> str:
               <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.6; color: #475569;">
                 Thank you for creating an account with AI Resume Analyzer. To complete your registration and protect your account, please enter the following 6-digit verification code:
               </p>
-              
+
               <!-- OTP Box -->
               <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
                 <span style="font-family: 'Courier New', Courier, monospace; font-size: 34px; font-weight: 700; letter-spacing: 8px; color: #1d4ed8; display: inline-block;">{otp}</span>
@@ -117,7 +130,8 @@ def build_verification_html(otp: str, full_name: Optional[str] = None) -> str:
 </html>"""
 
 
-def send_verification_email(email: str, otp: str, full_name: Optional[str] = None) -> Dict[str, Any]:
+def send_verification_email(
+        email: str, otp: str, full_name: str | None = None) -> dict[str, Any]:
     """
     Dispatches the 6-digit OTP to the user's email address.
     Supports Resend API, SMTP delivery, and resilient sandbox fallback.
@@ -132,7 +146,9 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
     subject = f"{otp} is your AI Resume Analyzer verification code"
 
     api_key = os.getenv("RESEND_API_KEY", "").strip() or RESEND_API_KEY
-    from_email = os.getenv("RESEND_FROM_EMAIL", "").strip() or RESEND_FROM_EMAIL
+    from_email = os.getenv(
+        "RESEND_FROM_EMAIL",
+        "").strip() or RESEND_FROM_EMAIL
 
     # 1. Try Resend API if configured
     if api_key:
@@ -162,11 +178,16 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                 }
             else:
                 err_text = res.text
-                logger.warning(f"Resend delivery response ({res.status_code}): {sanitize_log_message(err_text)}")
-                # Resend free sandbox limitation: only delivers to the Resend account owner's email
+                logger.warning(
+                    f"Resend delivery response ({
+                        res.status_code}): {
+                        sanitize_log_message(err_text)}")
+                # Resend free sandbox limitation: only delivers to the Resend
+                # account owner's email
                 is_sandbox_restricted = res.status_code == 403 or "only send testing emails" in err_text.lower()
-                
-                # If recipient was restricted by sandbox, attempt to notify owner account if different
+
+                # If recipient was restricted by sandbox, attempt to notify
+                # owner account if different
                 owner_email = "abburimohan2125@gmail.com"
                 if is_sandbox_restricted and clean_email != owner_email:
                     try:
@@ -194,7 +215,11 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                     "preview_otp": otp
                 }
         except Exception as e:
-            logger.warning(f"Resend API gateway unreachable ({type(e).__name__}): {sanitize_log_message(str(e))}")
+            logger.warning(
+                f"Resend API gateway unreachable ({
+                    type(e).__name__}): {
+                    sanitize_log_message(
+                        str(e))}")
             return {
                 "delivered": False,
                 "provider": "resend_timeout",
@@ -234,14 +259,17 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                 "preview_otp": None
             }
         except Exception as e:
-            logger.error(f"SMTP delivery error: {sanitize_log_message(str(e))}")
+            logger.error(
+                f"SMTP delivery error: {
+                    sanitize_log_message(
+                        str(e))}")
 
     # 3. Development / Safe Sandbox Fallback
-    logger.info("Email service dispatched verification code (sandbox fallback active)")
+    logger.info(
+        "Email service dispatched verification code (sandbox fallback active)")
     return {
         "delivered": False,
         "provider": "sandbox",
         "notice": "Sandbox mode active. Your 6-digit verification code is provided below.",
         "preview_otp": otp
     }
-

@@ -1,33 +1,33 @@
+from services.resume_analyzer import analyze_resume_with_gemini
+from services.privacy_guardrail import (
+    REDACTED_ADDRESS,
+    REDACTED_EMAIL,
+    REDACTED_GOV_ID,
+    REDACTED_PASSPORT,
+    REDACTED_PHONE,
+    PrivacyValidationError,
+    detect_pii,
+    redact_pii,
+    sanitize_log_message,
+    validate_job_description,
+    validate_uploaded_file,
+)
+from services.pdf_parser import extract_resume_text
+from services.ats_analyzer import analyze_structure_and_ats
+from schemas.resume_schema import ResumeAnalysisResponse
+import io
+import logging
 import os
 import sys
-import io
 import unittest
-import logging
 from unittest.mock import MagicMock, patch
+
 import pymupdf as fitz
 
 # Ensure backend directory is in sys.path
 backend_dir = os.path.dirname(os.path.abspath(__file__))
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
-
-from services.privacy_guardrail import (
-    validate_uploaded_file,
-    validate_job_description,
-    detect_pii,
-    redact_pii,
-    sanitize_log_message,
-    PrivacyValidationError,
-    REDACTED_EMAIL,
-    REDACTED_PHONE,
-    REDACTED_GOV_ID,
-    REDACTED_PASSPORT,
-    REDACTED_ADDRESS
-)
-from services.pdf_parser import extract_resume_text
-from services.ats_analyzer import analyze_structure_and_ats
-from services.resume_analyzer import analyze_resume_with_gemini
-from schemas.resume_schema import ResumeAnalysisResponse
 
 
 def generate_pdf_bytes_with_content(content: str) -> bytes:
@@ -60,17 +60,17 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         clean_content = """
         Professional Summary
         Experienced Python and React developer with 5 years building high scale microservices.
-        
+
         Technical Skills
         Languages: Python, JavaScript, TypeScript, SQL
         Frameworks: FastAPI, React, Node.js
         Databases: PostgreSQL, Redis
         Tools: Git, Docker, Kubernetes
-        
+
         Experience
         Software Engineer - Tech Enterprise (2020 - 2024)
         Engineered distributed microservices processing millions of daily transactions.
-        
+
         Education
         B.S. in Computer Science - State University
         """
@@ -99,7 +99,8 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         self.assertEqual(counts["emails"], 1)
         self.assertNotIn(email, redacted)
         self.assertIn(REDACTED_EMAIL, redacted)
-        print("✓ Test 2 Passed: Email address detected and redacted with [EMAIL_REDACTED].")
+        print(
+            "✓ Test 2 Passed: Email address detected and redacted with [EMAIL_REDACTED].")
 
     # --------------------------------------------------------------------------
     # Test Case 3: Resume containing a phone number
@@ -109,10 +110,14 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         for p in phones:
             text = f"Candidate phone line: {p} for technical recruiter contact."
             redacted, counts = redact_pii(text)
-            self.assertGreater(counts["phones"], 0, f"Failed to redact phone: {p}")
+            self.assertGreater(
+                counts["phones"],
+                0,
+                f"Failed to redact phone: {p}")
             self.assertNotIn(p, redacted)
             self.assertIn(REDACTED_PHONE, redacted)
-        print("✓ Test 3 Passed: Multiple phone number formats detected and redacted with [PHONE_REDACTED].")
+        print(
+            "✓ Test 3 Passed: Multiple phone number formats detected and redacted with [PHONE_REDACTED].")
 
     # --------------------------------------------------------------------------
     # Test Case 4: Resume containing Aadhaar/PAN-like identifiers
@@ -145,7 +150,7 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         Permanent Address: 124 Park Avenue, Suite 300, Sector 4, Bangalore
         Aadhaar: 4567 8901 2345 | PAN: BZRPK9876L
         Passport No: K1234567
-        
+
         Summary: Full Stack Engineer proficient in Python, FastAPI, and React.
         """
         redacted, counts = redact_pii(full_text)
@@ -173,8 +178,14 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
     # Test Case 6: Resume with invalid file extension
     # --------------------------------------------------------------------------
     def test_06_invalid_file_extension(self):
-        pdf_bytes = generate_pdf_bytes_with_content("Sample resume content with technical skills.")
-        invalid_filenames = ["resume.docx", "resume.txt", "resume.png", "resume.exe", "resume"]
+        pdf_bytes = generate_pdf_bytes_with_content(
+            "Sample resume content with technical skills.")
+        invalid_filenames = [
+            "resume.docx",
+            "resume.txt",
+            "resume.png",
+            "resume.exe",
+            "resume"]
         for fn in invalid_filenames:
             with self.assertRaises(PrivacyValidationError) as ctx:
                 validate_uploaded_file(contents=pdf_bytes, filename=fn)
@@ -188,9 +199,13 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
     def test_07_file_exceeding_size_limit(self):
         oversized_bytes = b"%PDF-" + b"0" * (10 * 1024 * 1024 + 512)
         with self.assertRaises(PrivacyValidationError) as ctx:
-            validate_uploaded_file(contents=oversized_bytes, filename="large_resume.pdf")
+            validate_uploaded_file(
+                contents=oversized_bytes,
+                filename="large_resume.pdf")
         self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("exceeds the maximum allowed limit", ctx.exception.message)
+        self.assertIn(
+            "exceeds the maximum allowed limit",
+            ctx.exception.message)
         print("✓ Test 7 Passed: Files exceeding 10MB limit strictly rejected.")
 
     # --------------------------------------------------------------------------
@@ -206,14 +221,18 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         # 8b: Corrupted non-PDF bytes (missing %PDF header)
         corrupted_bytes = b"Just some random binary noise without PDF magic header"
         with self.assertRaises(PrivacyValidationError) as ctx2:
-            validate_uploaded_file(contents=corrupted_bytes, filename="corrupt.pdf")
+            validate_uploaded_file(
+                contents=corrupted_bytes,
+                filename="corrupt.pdf")
         self.assertEqual(ctx2.exception.status_code, 400)
         self.assertIn("does not match genuine PDF", ctx2.exception.message)
 
         # 8c: Executable header (MZ) disguised as PDF
         executable_bytes = b"MZ\x90\x00\x03\x00\x00\x00" + b"%PDF-1.4"
         with self.assertRaises(PrivacyValidationError) as ctx3:
-            validate_uploaded_file(contents=executable_bytes, filename="malicious.pdf")
+            validate_uploaded_file(
+                contents=executable_bytes,
+                filename="malicious.pdf")
         self.assertEqual(ctx3.exception.status_code, 400)
         self.assertIn("Executable or polyglot files", ctx3.exception.message)
         print("✓ Test 8 Passed: Empty, corrupted, and polyglot files strictly rejected.")
@@ -235,7 +254,8 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         # Force exception in external AI client to verify graceful fallback
         with patch.dict(os.environ, {"GEMINI_API_KEY": "valid_mock_key_for_test"}):
             with patch("google.genai.Client") as mock_client:
-                mock_client.return_value.models.generate_content.side_effect = Exception("Service unavailable 503")
+                mock_client.return_value.models.generate_content.side_effect = Exception(
+                    "Service unavailable 503")
                 result = analyze_resume_with_gemini(
                     pdf_meta=meta,
                     job_description="Looking for Python Engineer",
@@ -271,11 +291,15 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         Experience: Developed microservices for distributed web architectures and optimized relational database queries.
         Education: Bachelor of Science in Computer Science.
         """
-        mock_file = MockUploadFile("clean_resume.pdf", generate_pdf_bytes_with_content(resume_text_30_words))
-        
+        mock_file = MockUploadFile(
+            "clean_resume.pdf",
+            generate_pdf_bytes_with_content(resume_text_30_words))
+
         # Simulate try/finally wrapper
         try:
-            validate_uploaded_file(contents=mock_file.content, filename=mock_file.filename)
+            validate_uploaded_file(
+                contents=mock_file.content,
+                filename=mock_file.filename)
             meta = extract_resume_text(mock_file.content)
             self.assertIsNotNone(meta)
         finally:
@@ -306,7 +330,9 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         cleanup_executed = False
 
         try:
-            validate_uploaded_file(contents=mock_file.content, filename=mock_file.filename)
+            validate_uploaded_file(
+                contents=mock_file.content,
+                filename=mock_file.filename)
         except PrivacyValidationError:
             pass  # Expected error
         finally:
@@ -333,17 +359,17 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         Phone: {raw_phone}
         Aadhaar: {raw_aadhaar}
         Address: {raw_address}
-        
+
         Professional Summary
         Full Stack Engineer with experience in Python, TypeScript, and AWS.
-        
+
         Technical Skills
         Python, React, PostgreSQL, Docker, Git
-        
+
         Experience
         Senior Developer at Tech Co (2021 - 2024)
         Engineered scalable cloud infrastructure.
-        
+
         Education
         B.S. in Software Engineering
         """
@@ -356,7 +382,7 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
             with patch("google.genai.Client") as mock_client:
                 mock_model = MagicMock()
                 mock_client.return_value.models = mock_model
-                
+
                 # Mock AI response
                 mock_response = MagicMock()
                 mock_response.text = '{"content_score": 85, "strengths": ["Strong background"], "problems": [], "improvements": [], "roles": [], "keywords": {}}'
@@ -410,25 +436,26 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         Contact: candidate@example.com | (555) 019-2834
         Professional Summary
         Senior Python Engineer with 6 years experience.
-        
+
         Technical Skills
         Python, FastAPI, Django, React, PostgreSQL, Docker
-        
+
         Work Experience
         Tech Lead - Enterprise Software (Jan 2021 - Present)
         Led development of cloud microservices.
-        
+
         Projects
         Resume ATS Optimizer (2024)
         Built an ATS diagnostic tool.
-        
+
         Education
         B.S. in Computer Science (2016 - 2020)
         """
         pdf_bytes = generate_pdf_bytes_with_content(resume_text)
         meta = extract_resume_text(pdf_bytes)
 
-        s_score, a_score, s_map, s_details, a_issues = analyze_structure_and_ats(meta)
+        s_score, a_score, s_map, s_details, a_issues = analyze_structure_and_ats(
+            meta)
         self.assertGreaterEqual(s_score, 70)
         self.assertGreaterEqual(a_score, 70)
         self.assertTrue(s_map.get("skills"))
@@ -436,7 +463,8 @@ class TestPrivacyGuardrailsAndDataMinimization(unittest.TestCase):
         self.assertTrue(s_map.get("experience"))
 
         # Verify job description validator
-        valid_jd = validate_job_description("Software Engineer with Python and React skills")
+        valid_jd = validate_job_description(
+            "Software Engineer with Python and React skills")
         self.assertIsNotNone(valid_jd)
         with self.assertRaises(PrivacyValidationError):
             validate_job_description("x" * 15000)
