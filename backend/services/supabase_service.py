@@ -37,8 +37,8 @@ def get_supabase_client() -> Client:
         _client = create_client(SUPABASE_URL, SERVICE_KEY)
         return _client
     except Exception as e:
-        logger.error(f"Failed to initialize Supabase client: {e}")
-        raise RuntimeError(f"Could not connect to Supabase: {str(e)}")
+        logger.error(f"Failed to initialize Supabase client: {sanitize_log_message(str(e))}")
+        raise RuntimeError("Could not connect to Supabase. Check your credentials.")
 
 
 def get_admin_client() -> Client:
@@ -161,12 +161,12 @@ def get_user_analyses(user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         return res.data or []
     except Exception as e:
         err_msg = str(e)
-        logger.error(f"Error fetching history from Supabase: {err_msg}")
+        logger.error(f"Error fetching history from Supabase: {sanitize_log_message(err_msg)}")
         if "PGRST205" in err_msg or "schema cache" in err_msg:
             return []
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch analysis history from Supabase: {err_msg}",
+            detail="Failed to fetch analysis history.",
         )
 
 
@@ -187,7 +187,7 @@ def get_analysis_by_id(analysis_id: str, user_id: str) -> Optional[Dict[str, Any
         return res.data
     except Exception as e:
         err_msg = str(e)
-        logger.error(f"Error fetching analysis detail {analysis_id}: {err_msg}")
+        logger.error(f"Error fetching analysis detail: {sanitize_log_message(err_msg)}")
         return None
 
 
@@ -206,7 +206,7 @@ def delete_analysis_by_id(analysis_id: str, user_id: str) -> bool:
         )
         return bool(res.data)
     except Exception as e:
-        logger.error(f"Error deleting analysis {analysis_id}: {e}")
+        logger.error(f"Error deleting analysis record: {sanitize_log_message(str(e))}")
         return False
 
 
@@ -366,7 +366,7 @@ def mark_user_email_verified(user_id: str, email: str) -> None:
             }
         )
     except Exception as e:
-        logger.error(f"Error marking user {user_id} email confirmed in Auth: {e}")
+        logger.error(f"Error marking user email confirmed in Auth: {sanitize_log_message(str(e))}")
 
     try:
         admin_client.table("profiles").update({"email_verified": True}).eq("id", user_id).execute()

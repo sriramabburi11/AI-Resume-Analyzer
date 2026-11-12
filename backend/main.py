@@ -153,16 +153,16 @@ def register_user(body: UserRegisterRequest):
                     )
                     user_id = str(existing.id)
             except Exception as upd_err:
-                logger.warning(f"Error updating existing user: {upd_err}")
+                logger.warning(f"Error updating existing user: {sanitize_log_message(str(upd_err))}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="An account with this email address already exists. Please sign in."
                 )
         else:
-            logger.error(f"Supabase user creation error: {e}")
+            logger.error(f"Supabase user creation error: {sanitize_log_message(str(e))}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=err_msg
+                detail="Registration failed. Please try again."
             )
 
     # Mark user verified in profiles
@@ -285,7 +285,7 @@ def verify_email(body: VerifyEmailRequest):
             )
             mark_user_email_verified(user_id, clean_email)
     except Exception as e:
-        logger.error(f"Error marking user verified: {e}")
+        logger.error(f"Error marking user verified: {sanitize_log_message(str(e))}")
 
     # Generate authenticated session token
     access_token = ""
@@ -297,7 +297,7 @@ def verify_email(body: VerifyEmailRequest):
         if auth_res.session:
             access_token = auth_res.session.access_token
     except Exception as token_err:
-        logger.warning(f"Session generation warning: {token_err}")
+        logger.warning(f"Session generation warning: {sanitize_log_message(str(token_err))}")
 
     return AuthResponse(
         user=UserProfileResponse(
@@ -347,7 +347,7 @@ def resend_verification(body: ResendVerificationRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"Error checking user for resend: {e}")
+        logger.warning(f"Error checking user for resend: {sanitize_log_message(str(e))}")
 
     # Check cooldown against previous record
     active_record = get_active_otp_record(clean_email, "email_verification")
@@ -429,7 +429,7 @@ def login_user(body: UserLoginRequest):
                         "password": body.password
                     })
             except Exception as auto_conf_err:
-                logger.warning(f"Auto-confirm failed: {auto_conf_err}")
+                logger.warning(f"Auto-confirm failed: {sanitize_log_message(str(auto_conf_err))}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid email or password.",
@@ -510,7 +510,7 @@ def update_profile_name(
             {"user_metadata": {"full_name": clean_name}}
         )
     except Exception as e:
-        logger.error(f"Error updating user profile: {e}")
+        logger.error(f"Error updating user profile: {sanitize_log_message(str(e))}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update profile name."
