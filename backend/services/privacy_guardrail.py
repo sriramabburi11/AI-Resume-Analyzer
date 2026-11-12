@@ -149,18 +149,18 @@ def validate_uploaded_file(
     # 5. PDF structural validity check using PyMuPDF
     try:
         doc = fitz.open(stream=contents, filetype="pdf")
-        if doc.page_count == 0:
-            doc.close()
-            raise PrivacyValidationError(
-                "PDF document contains 0 pages.", status_code=400)
-        doc.close()
-    except PrivacyValidationError:
-        raise
     except Exception:
         raise PrivacyValidationError(
             "Unable to read or parse PDF structure: corrupted or malformed file.",
             status_code=422
         )
+
+    try:
+        if doc.page_count == 0:
+            raise PrivacyValidationError(
+                "PDF document contains 0 pages.", status_code=400)
+    finally:
+        doc.close()
 
 
 def validate_job_description(job_description: str | None) -> str | None:
