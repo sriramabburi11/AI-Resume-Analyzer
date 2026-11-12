@@ -1,11 +1,13 @@
 from services.supabase_service import check_supabase_connection, get_supabase_client
 from services.pdf_parser import extract_resume_text
 from main import app
+# pyrefly: ignore[missing-import]
 import pymupdf as fitz
 import os
 import sys
 import unittest
 
+# pyrefly: ignore[missing-import]
 from fastapi.testclient import TestClient
 
 # Ensure backend directory is in sys.path

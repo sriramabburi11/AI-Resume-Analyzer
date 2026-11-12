@@ -1,6 +1,6 @@
 import logging
 import re
-
+# pyrefly: ignore[missing-import]
 import pymupdf as fitz
 
 logger = logging.getLogger("privacy_guardrail")

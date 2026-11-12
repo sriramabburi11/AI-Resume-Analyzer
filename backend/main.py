@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import uvicorn
+# pyrefly: ignore[missing-import]
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+# pyrefly: ignore[missing-import]
 from fastapi.middleware.cors import CORSMiddleware
 from schemas.resume_schema import (
     AnalysisDetailResponse,

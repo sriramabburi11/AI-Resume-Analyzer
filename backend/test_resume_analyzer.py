@@ -1,5 +1,6 @@
 import json
 
+# pyrefly: ignore[missing-import]
 import pymupdf as fitz
 from services.ats_analyzer import analyze_structure_and_ats
 from services.pdf_parser import extract_resume_text

@@ -1,6 +1,6 @@
 import re
 from typing import Any
-
+# pyrefly: ignore[missing-import]
 import pymupdf as fitz  # PyMuPDF
 
 

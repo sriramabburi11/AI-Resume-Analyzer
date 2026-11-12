@@ -22,6 +22,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+# pyrefly: ignore[missing-import]
 import pymupdf as fitz
 
 # Ensure backend directory is in sys.path

@@ -33,7 +33,9 @@ import unittest
 LEGACY_MODULES_AVAILABLE = False
 try:
     sys.path.insert(0, os.path.dirname(__file__))
+    # pyrefly: ignore[missing-import]
     from database import Base, SessionLocal, engine
+    # pyrefly: ignore[missing-import]
     from models import PasswordResetToken, ResumeAnalysis, User
     LEGACY_MODULES_AVAILABLE = True
 except ImportError:

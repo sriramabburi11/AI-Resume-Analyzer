@@ -363,6 +363,7 @@ def analyze_resume_with_gemini(
     # Call Gemini API using google-genai standard SDK with PII-redacted text
     try:
         from google import genai
+        # pyrefly: ignore[missing-import]
         from google.genai import types
 
         client = genai.Client(api_key=api_key)
