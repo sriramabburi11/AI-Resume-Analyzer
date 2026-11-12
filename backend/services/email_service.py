@@ -8,6 +8,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Optional, Dict, Any
 import requests
+from services.privacy_guardrail import sanitize_log_message
 
 logger = logging.getLogger("email_service")
 
@@ -152,7 +153,7 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                 timeout=8,
             )
             if res.status_code in (200, 201):
-                logger.info(f"Verification email delivered via Resend to {clean_email}")
+                logger.info("Verification email delivered via Resend")
                 return {
                     "delivered": True,
                     "provider": "resend",
@@ -161,7 +162,7 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                 }
             else:
                 err_text = res.text
-                logger.warning(f"Resend delivery response ({res.status_code}): {err_text}")
+                logger.warning(f"Resend delivery response ({res.status_code}): {sanitize_log_message(err_text)}")
                 # Resend free sandbox limitation: only delivers to the Resend account owner's email
                 is_sandbox_restricted = res.status_code == 403 or "only send testing emails" in err_text.lower()
                 
@@ -193,7 +194,7 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                     "preview_otp": otp
                 }
         except Exception as e:
-            logger.warning(f"Resend API gateway unreachable ({type(e).__name__}): {e}")
+            logger.warning(f"Resend API gateway unreachable ({type(e).__name__}): {sanitize_log_message(str(e))}")
             return {
                 "delivered": False,
                 "provider": "resend_timeout",
@@ -225,7 +226,7 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
             server.login(smtp_user, smtp_pwd)
             server.sendmail(SMTP_FROM_EMAIL, [clean_email], msg.as_string())
             server.quit()
-            logger.info(f"Verification email delivered via SMTP to {clean_email}")
+            logger.info("Verification email delivered via SMTP")
             return {
                 "delivered": True,
                 "provider": "smtp",
@@ -233,10 +234,10 @@ def send_verification_email(email: str, otp: str, full_name: Optional[str] = Non
                 "preview_otp": None
             }
         except Exception as e:
-            logger.error(f"SMTP delivery error for {clean_email}: {e}")
+            logger.error(f"SMTP delivery error: {sanitize_log_message(str(e))}")
 
     # 3. Development / Safe Sandbox Fallback
-    logger.info(f"Email service dispatched verification code to {clean_email} (sandbox fallback active)")
+    logger.info("Email service dispatched verification code (sandbox fallback active)")
     return {
         "delivered": False,
         "provider": "sandbox",

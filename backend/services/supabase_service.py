@@ -275,7 +275,7 @@ def save_otp_record(
         if res.data and len(res.data) > 0:
             return res.data[0]
     except Exception as e:
-        logger.warning(f"Notice: Supabase email_verifications insert notice: {e}. In-memory fallback active.")
+        logger.warning(f"Notice: Supabase email_verifications insert notice: {sanitize_log_message(str(e))}. In-memory fallback active.")
 
     return record
 
@@ -302,7 +302,7 @@ def get_active_otp_record(email: str, purpose: str = "email_verification") -> Op
         if res.data and len(res.data) > 0:
             return res.data[0]
     except Exception as e:
-        logger.debug(f"Querying email_verifications table notice: {e}")
+        logger.debug(f"Querying email_verifications table notice: {sanitize_log_message(str(e))}")
 
     # 2. Check local memory cache
     cached = _in_memory_otp_cache.get(f"{clean_email}:{purpose}")
@@ -329,7 +329,7 @@ def increment_otp_attempt(record_id: Optional[str], email: str, purpose: str = "
             admin_client = get_admin_client()
             admin_client.table("email_verifications").update({"attempts": new_attempts}).eq("id", record_id).execute()
         except Exception as e:
-            logger.debug(f"Updating attempts in Supabase notice: {e}")
+            logger.debug(f"Updating attempts in Supabase notice: {sanitize_log_message(str(e))}")
 
     return new_attempts
 
@@ -348,7 +348,7 @@ def mark_otp_consumed(record_id: Optional[str], email: str, purpose: str = "emai
             admin_client = get_admin_client()
             admin_client.table("email_verifications").update({"consumed": True}).eq("id", record_id).execute()
         except Exception as e:
-            logger.debug(f"Marking OTP consumed in Supabase notice: {e}")
+            logger.debug(f"Marking OTP consumed in Supabase notice: {sanitize_log_message(str(e))}")
 
 
 def mark_user_email_verified(user_id: str, email: str) -> None:
@@ -371,4 +371,4 @@ def mark_user_email_verified(user_id: str, email: str) -> None:
     try:
         admin_client.table("profiles").update({"email_verified": True}).eq("id", user_id).execute()
     except Exception as e:
-        logger.debug(f"Profiles update notice: {e}")
+        logger.debug(f"Profiles update notice: {sanitize_log_message(str(e))}")

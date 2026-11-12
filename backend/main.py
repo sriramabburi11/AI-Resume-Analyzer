@@ -181,7 +181,7 @@ def register_user(body: UserRegisterRequest):
         if auth_res.session:
             access_token = auth_res.session.access_token
     except Exception as token_err:
-        logger.warning(f"Session generation fallback: {token_err}")
+        logger.warning(f"Session generation fallback: {sanitize_log_message(str(token_err))}")
         try:
             auth_client = get_supabase_client()
             login_res = auth_client.auth.sign_in_with_password({
