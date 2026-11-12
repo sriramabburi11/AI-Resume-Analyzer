@@ -25,6 +25,13 @@ from schemas.resume_schema import (
 )
 from services.pdf_parser import extract_resume_text, PDFParsingError
 from services.resume_analyzer import analyze_resume_with_gemini
+from services.privacy_guardrail import (
+    validate_uploaded_file,
+    validate_job_description,
+    PrivacyValidationError,
+    redact_pii,
+    sanitize_log_message
+)
 from services.email_service import (
     generate_secure_otp,
     hash_otp,
@@ -429,7 +436,8 @@ def login_user(body: UserLoginRequest):
                     headers={"WWW-Authenticate": "Bearer"},
                 )
         else:
-            logger.warning(f"Supabase login failed for {clean_email}: {e}")
+            safe_err = sanitize_log_message(str(e))
+            logger.warning(f"Supabase login failed: {safe_err}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password.",
@@ -527,7 +535,8 @@ def forgot_password(body: ForgotPasswordRequest):
     try:
         client.auth.reset_password_email(clean_email)
     except Exception as e:
-        logger.info(f"Password reset request for {clean_email}: {e}")
+        safe_msg = sanitize_log_message(str(e))
+        logger.info(f"Password reset request processed: {safe_msg}")
 
     return {
         "message": "If an account exists with this email address, password reset instructions have been sent."
@@ -545,52 +554,47 @@ async def analyze_resume(
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Protected resume analysis endpoint.
-    1. Validates and parses uploaded PDF in-memory (no raw files saved to disk).
-    2. Runs Gemini ATS and role analysis engine.
-    3. Persists structured analysis results into Supabase `resume_analyses` table against user's UUID.
+    Protected resume analysis endpoint with Data Minimization and Deterministic Privacy Guardrails.
+    1. Validates file integrity, extension, magic bytes, and size deterministically.
+    2. Parses PDF in-memory (no raw files permanently stored).
+    3. Redacts PII deterministically before sending prompt to Gemini AI.
+    4. Guarantees temporary file cleanup via try/finally.
+    5. Persists minimized structured analysis results into Supabase without raw resume text or PII.
     """
-    # 1. File validation
-    if not resume.filename or not resume.filename.lower().endswith(".pdf"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file format. Please upload a PDF file."
-        )
-
     try:
         # Read file contents into memory
         contents = await resume.read()
 
-        if len(contents) > MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File size exceeds the 10 MB limit. Please upload a smaller PDF."
-            )
-
-        if len(contents) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Uploaded PDF file is empty."
-            )
+        # Deterministic security & input validation
+        validate_uploaded_file(
+            contents=contents,
+            filename=resume.filename,
+            content_type=resume.content_type
+        )
+        validated_jd = validate_job_description(job_description)
 
         # 2. Extract text and metadata in-memory
         pdf_meta = extract_resume_text(contents)
 
-        # 3. Analyze resume with Gemini AI (or mock fallback if unconfigured)
+        # 3. Analyze resume with Gemini AI (PII is redacted before external AI call, or mock fallback)
         analysis_result = analyze_resume_with_gemini(
             pdf_meta=pdf_meta,
-            job_description=job_description,
+            job_description=validated_jd,
             filename=resume.filename
         )
 
-        # 4. Save analysis summary to Supabase resume_analyses table
+        # 4. Save minimized analysis summary to Supabase resume_analyses table
         try:
             job_title = None
-            if job_description and job_description.strip():
-                first_line = job_description.strip().splitlines()[0]
+            if validated_jd and validated_jd.strip():
+                first_line = validated_jd.strip().splitlines()[0]
                 job_title = first_line[:80].strip()
             elif analysis_result.roles and len(analysis_result.roles) > 0:
                 job_title = analysis_result.roles[0].role
+
+            # Ensure job title has no accidental PII
+            if job_title:
+                job_title, _ = redact_pii(job_title)
 
             clean_summary = analysis_result.model_dump()
             clean_summary.pop("saved_analysis_id", None)
@@ -612,12 +616,18 @@ async def analyze_resume(
             analysis_result.saved_to_history = True
             analysis_result.history_error = None
         except Exception as save_err:
-            logger.error(f"Error saving analysis to Supabase: {save_err}")
+            safe_save_err = sanitize_log_message(str(save_err))
+            logger.error(f"Error saving analysis to Supabase: {safe_save_err}")
             analysis_result.saved_to_history = False
             analysis_result.history_error = "Resume analyzed successfully, but could not be saved to your Supabase history."
 
         return analysis_result
 
+    except PrivacyValidationError as pve:
+        raise HTTPException(
+            status_code=pve.status_code,
+            detail=pve.message
+        )
     except PDFParsingError as pe:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -626,11 +636,18 @@ async def analyze_resume(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing resume: {e}")
+        safe_err = sanitize_log_message(str(e))
+        logger.error(f"Error processing resume: {safe_err}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while analyzing the resume. Please try again."
         )
+    finally:
+        # Guaranteed cleanup of FastAPI SpooledTemporaryFile to prevent lingering files on disk
+        try:
+            await resume.close()
+        except Exception:
+            pass
 
 
 @app.get("/api/history", response_model=List[AnalysisHistoryItem])

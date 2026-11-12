@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
+from services.privacy_guardrail import sanitize_log_message
 
 logger = logging.getLogger("supabase_service")
 
@@ -90,10 +91,10 @@ async def get_current_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning(f"Supabase auth token verification error: {e}")
+        logger.warning(f"Supabase auth token verification error: {sanitize_log_message(str(e))}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication failed: {str(e)}",
+            detail="Authentication failed. Invalid or expired token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -130,7 +131,7 @@ def save_resume_analysis(
         return payload
     except Exception as e:
         err_msg = str(e)
-        logger.error(f"Error saving analysis to Supabase: {err_msg}")
+        logger.error(f"Error saving analysis to Supabase: {sanitize_log_message(err_msg)}")
         # Check if table missing
         if "PGRST205" in err_msg or "schema cache" in err_msg:
             raise HTTPException(
@@ -139,7 +140,7 @@ def save_resume_analysis(
             )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save analysis to Supabase: {err_msg}",
+            detail="Failed to save analysis to database.",
         )
 
 

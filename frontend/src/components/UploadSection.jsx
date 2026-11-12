@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, FileCheck, X, AlertCircle, ArrowRight, Briefcase, Sparkles, Loader2, ShieldCheck } from 'lucide-react';
+import { UploadCloud, FileCheck, X, AlertCircle, ArrowRight, Briefcase, Sparkles, Loader2, ShieldCheck, ChevronDown, ChevronUp, Lock, EyeOff, Trash2, Info } from 'lucide-react';
 
 const MAX_SIZE_MB = 10;
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
@@ -8,6 +8,7 @@ export default function UploadSection({ onAnalyze, isLoading, error, setError })
   const [file, setFile] = useState(null);
   const [jobDescription, setJobDescription] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showPrivacyDetails, setShowPrivacyDetails] = useState(false);
   const fileInputRef = useRef(null);
 
   const validateAndSetFile = (selectedFile) => {
@@ -211,12 +212,107 @@ export default function UploadSection({ onAnalyze, isLoading, error, setError })
           </button>
         </div>
 
-        {/* Privacy & AI Provider Disclosure */}
-        <div className="pt-2 text-center text-xs text-slate-500 flex items-center justify-center gap-1.5">
-          <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-          <span>
-            Uploaded resumes are processed in-memory and analyzed with Google Gemini AI. Files and extracted raw text are not permanently stored.
-          </span>
+        {/* Privacy Notice & Transparency Guardrail */}
+        <div className="pt-2 border-t border-slate-100 space-y-3">
+          <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-slate-600">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="leading-relaxed">
+                <strong className="text-slate-800">Your privacy matters.</strong> Your resume is processed for analysis, and sensitive personal information is minimized before external AI processing. Temporary files are deleted after processing. We aim to collect and retain only the information necessary to provide this service.
+              </p>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowPrivacyDetails(!showPrivacyDetails)}
+                  className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium underline underline-offset-2 transition-colors cursor-pointer"
+                >
+                  <Info className="w-3.5 h-3.5" />
+                  <span>{showPrivacyDetails ? 'Hide privacy details' : 'How we protect your data & privacy'}</span>
+                  {showPrivacyDetails ? (
+                    <ChevronUp className="w-3.5 h-3.5" />
+                  ) : (
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Collapsible Concise Privacy Information Section */}
+          {showPrivacyDetails && (
+            <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 text-xs text-slate-600 space-y-3.5 fade-in shadow-sm">
+              <div className="flex items-center gap-2 text-slate-900 font-semibold text-sm pb-1 border-b border-slate-100">
+                <Lock className="w-4 h-4 text-blue-600" />
+                <span>Privacy & Data Protection Transparency</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                <div className="space-y-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                    What Information is Processed
+                  </p>
+                  <p className="text-slate-600 leading-relaxed">
+                    Uploaded PDF text, layout structure, and optional job description. Sensitive identifiers (emails, phone numbers, government IDs like Aadhaar/PAN, physical addresses, passports) are automatically detected and redacted before any external AI processing.
+                  </p>
+                </div>
+
+                <div className="space-y-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                    Why Information is Processed
+                  </p>
+                  <p className="text-slate-600 leading-relaxed">
+                    Strictly to calculate ATS compatibility scores, section diagnostics, bullet improvements, and technical role matching. Information is not used for tracking, profiling, or cross-site analytics.
+                  </p>
+                </div>
+
+                <div className="space-y-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <EyeOff className="w-3.5 h-3.5 text-emerald-600" />
+                    External AI Provider Disclosure
+                  </p>
+                  <p className="text-slate-600 leading-relaxed">
+                    Semantic evaluations are processed via Google Gemini API. Only sanitized, PII-redacted text is transmitted. Requests are governed by Google Cloud API data governance policies (data sent via API is not used to train foundation models).
+                  </p>
+                </div>
+
+                <div className="space-y-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                    What Information is Stored
+                  </p>
+                  <p className="text-slate-600 leading-relaxed">
+                    Only calculated numerical scores (ATS, structure, content) and generated improvement recommendations are stored in your private Supabase database history. Original PDF files and extracted raw text are never stored.
+                  </p>
+                </div>
+
+                <div className="space-y-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <Trash2 className="w-3.5 h-3.5 text-amber-600" />
+                    Temporary File Handling
+                  </p>
+                  <p className="text-slate-600 leading-relaxed">
+                    Resumes are parsed strictly in-memory. Any temporary memory buffers and spooled temporary files are guaranteed to be purged immediately using try/finally cleanup handlers upon analysis completion or unexpected failure.
+                  </p>
+                </div>
+
+                <div className="space-y-1 bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <p className="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                    Requesting Data Deletion
+                  </p>
+                  <p className="text-slate-600 leading-relaxed">
+                    You have full ownership of your data. You can permanently delete any saved analysis record at any time with a single click from the History tab, or delete your account to purge all associated records.
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-400 italic pt-1">
+                Note: While deterministic guardrails redact identified sensitive personal details before API requests, standard third-party API provider operational logging and retention terms apply.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

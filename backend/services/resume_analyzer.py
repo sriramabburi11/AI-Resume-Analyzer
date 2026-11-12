@@ -14,6 +14,7 @@ from schemas.resume_schema import (
     ATSIssue
 )
 from services.ats_analyzer import analyze_structure_and_ats
+from services.privacy_guardrail import redact_pii, sanitize_log_message
 
 load_dotenv()
 
@@ -268,27 +269,34 @@ def analyze_resume_with_gemini(
     Main entry point for analyzing a resume.
     Calculates deterministic ATS and Structure scores, then invokes Gemini API for deep semantic evaluation.
     Falls back gracefully to intelligent mock analysis if Gemini API is not configured or encounters error.
+    Deterministic Privacy Guardrail: All Personally Identifiable Information (PII) is redacted BEFORE external AI processing.
     """
     pdf_meta["filename"] = filename
     structure_score, ats_score, sections_map, section_details, ats_issues = analyze_structure_and_ats(pdf_meta)
     resume_text = pdf_meta["text"]
 
+    # Deterministic Privacy Guardrail: Detect and redact PII before external AI processing
+    redacted_resume_text, _ = redact_pii(resume_text)
+    redacted_job_description = None
+    if job_description:
+        redacted_job_description, _ = redact_pii(job_description)
+
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
 
-    # If no valid API key is set, use intelligent mock response
+    # If no valid API key is set, use intelligent mock response with sanitized text
     if not api_key or api_key == "your_gemini_api_key_here":
         return generate_mock_fallback_analysis(
-            text=resume_text,
+            text=redacted_resume_text,
             pdf_meta=pdf_meta,
             structure_score=structure_score,
             ats_score=ats_score,
             sections_map=sections_map,
             section_details=section_details,
             ats_issues=ats_issues,
-            job_description=job_description
+            job_description=redacted_job_description
         )
 
-    # Call Gemini API using google-genai standard SDK
+    # Call Gemini API using google-genai standard SDK with PII-redacted text
     try:
         from google import genai
         from google.genai import types
@@ -298,12 +306,12 @@ def analyze_resume_with_gemini(
         prompt = f"""
         RESUME TEXT:
         ---
-        {resume_text}
+        {redacted_resume_text}
         ---
 
         OPTIONAL JOB DESCRIPTION:
         ---
-        {job_description or "None provided."}
+        {redacted_job_description or "None provided."}
         ---
 
         DETERMINISTIC ATS & STRUCTURE EVALUATION (Reference metadata):
@@ -376,27 +384,30 @@ def analyze_resume_with_gemini(
         c_score = data.get("content_score", 78)
         overall_score = int((structure_score * 0.25) + (ats_score * 0.35) + (c_score * 0.40))
 
-        # Parse improvements into objects
+        # Parse improvements into objects with defense-in-depth PII redaction
         improvements_list = []
         for imp in data.get("improvements", []):
+            clean_curr, _ = redact_pii(imp.get("current", ""))
+            clean_rec, _ = redact_pii(imp.get("recommended_change", ""))
             improvements_list.append(ImprovementItem(
                 priority=imp.get("priority", "Medium"),
-                current=imp.get("current", ""),
+                current=clean_curr,
                 problem=imp.get("problem", ""),
-                recommended_change=imp.get("recommended_change", ""),
+                recommended_change=clean_rec,
                 reason=imp.get("reason", "")
             ))
 
-        # Parse roles into objects
+        # Parse roles into objects with defense-in-depth PII redaction
         roles_list = []
         for r in data.get("roles", []):
+            clean_evidence, _ = redact_pii(r.get("evidence", ""))
             roles_list.append(RoleRecommendation(
                 role=r.get("role", ""),
                 match_percentage=r.get("match_percentage", 80),
                 matching_skills=r.get("matching_skills", []),
                 missing_skills=r.get("missing_skills", []),
                 reason=r.get("reason", ""),
-                evidence=r.get("evidence", "")
+                evidence=clean_evidence
             ))
 
         # Job match details
@@ -439,14 +450,16 @@ def analyze_resume_with_gemini(
         )
 
     except Exception as e:
-        print(f"Gemini API call failed or unparseable: {e}. Falling back to heuristic analysis.")
+        safe_msg = sanitize_log_message(str(e))
+        import logging
+        logging.getLogger("resume_analyzer").warning(f"Gemini API call failed or unparseable: {safe_msg}. Falling back to heuristic analysis.")
         return generate_mock_fallback_analysis(
-            text=resume_text,
+            text=redacted_resume_text,
             pdf_meta=pdf_meta,
             structure_score=structure_score,
             ats_score=ats_score,
             sections_map=sections_map,
             section_details=section_details,
             ats_issues=ats_issues,
-            job_description=job_description
+            job_description=redacted_job_description
         )
