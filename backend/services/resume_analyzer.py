@@ -363,7 +363,6 @@ def analyze_resume_with_gemini(
     # Call Gemini API using google-genai standard SDK with PII-redacted text
     try:
         from google import genai
-        # pyrefly: ignore[missing-import]
         from google.genai import types
 
         client = genai.Client(api_key=api_key)
@@ -443,7 +442,11 @@ def analyze_resume_with_gemini(
             ),
         )
 
-        data = json.loads(response.text)
+        resp_text = response.text
+        if not resp_text:
+            raise ValueError("AI model returned an empty response")
+
+        data = json.loads(resp_text)
 
         # Combine deterministic scores with AI output
         c_score = data.get("content_score", 78)

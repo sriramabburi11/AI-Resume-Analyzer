@@ -4,9 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import uvicorn
-# pyrefly: ignore[missing-import]
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
-# pyrefly: ignore[missing-import]
 from fastapi.middleware.cors import CORSMiddleware
 from schemas.resume_schema import (
     AnalysisDetailResponse,
@@ -132,7 +130,7 @@ def register_user(body: UserRegisterRequest):
                 "email_verified": True
             }
         })
-        user_id = str(admin_res.user.id)
+        user_id = admin_res.user.id
     except Exception as e:
         err_msg = str(e)
         if "already" in err_msg.lower() or "exists" in err_msg.lower():
@@ -142,7 +140,7 @@ def register_user(body: UserRegisterRequest):
                     (u for u in users if u.email == clean_email), None)
                 if existing:
                     admin_client.auth.admin.update_user_by_id(
-                        str(existing.id),
+                        existing.id,
                         {
                             "email_confirm": True,
                             "password": body.password,
@@ -152,7 +150,7 @@ def register_user(body: UserRegisterRequest):
                             }
                         }
                     )
-                    user_id = str(existing.id)
+                    user_id = existing.id
             except Exception as upd_err:
                 logger.warning(
                     f"Error updating existing user: {
@@ -290,7 +288,7 @@ def verify_email(body: VerifyEmailRequest):
         users = admin_client.auth.admin.list_users()
         user_obj = next((u for u in users if u.email == clean_email), None)
         if user_obj:
-            user_id = str(user_obj.id)
+            user_id = user_obj.id
             meta = getattr(user_obj, "user_metadata", {}) or {}
             full_name = meta.get("full_name") or meta.get("name") or full_name
             # Confirm user
@@ -465,7 +463,7 @@ def login_user(body: UserLoginRequest):
                     (u for u in users if u.email == clean_email), None)
                 if existing:
                     admin_client.auth.admin.update_user_by_id(
-                        str(existing.id),
+                        existing.id,
                         {"email_confirm": True, "user_metadata": {
                             **(getattr(existing, "user_metadata", {}) or {}), "email_verified": True}}
                     )
@@ -502,7 +500,7 @@ def login_user(body: UserLoginRequest):
 
     return AuthResponse(
         user=UserProfileResponse(
-            id=str(auth_res.user.id),
+            id=auth_res.user.id,
             email=auth_res.user.email or clean_email,
             full_name=full_name,
             email_verified=True,
@@ -658,7 +656,7 @@ async def analyze_resume(
 
             record = save_resume_analysis(
                 user_id=current_user["id"],
-                resume_name=resume.filename,
+                resume_name=resume.filename or "resume.pdf",
                 job_title=job_title,
                 ats_score=analysis_result.ats_score,
                 structure_score=analysis_result.structure_score,

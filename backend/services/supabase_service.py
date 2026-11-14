@@ -1,11 +1,9 @@
 import logging
 import os
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
-# pyrefly: ignore[missing-import]
 from fastapi import Depends, HTTPException, status
-# pyrefly: ignore[missing-import]
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from services.privacy_guardrail import sanitize_log_message
 
@@ -99,7 +97,7 @@ async def get_current_user(
         meta = getattr(u, "user_metadata", {}) or {}
 
         return {
-            "id": str(u.id),
+            "id": u.id,
             "email": u.email,
             "full_name": meta.get("full_name") or meta.get("name") or (u.email.split("@")[0] if u.email else "User"),
             "email_verified": True,
@@ -147,7 +145,7 @@ def save_resume_analysis(
     try:
         res = client.table("resume_analyses").insert(payload).execute()
         if res.data and len(res.data) > 0:
-            return res.data[0]
+            return cast(dict[str, Any], res.data[0])
         return payload
     except Exception as e:
         err_msg = str(e)
@@ -180,7 +178,7 @@ def get_user_analyses(user_id: str, limit: int = 50) -> list[dict[str, Any]]:
             .limit(limit)
             .execute()
         )
-        return res.data or []
+        return cast(list[dict[str, Any]], res.data or [])
     except Exception as e:
         err_msg = str(e)
         logger.error(
@@ -209,7 +207,7 @@ def get_analysis_by_id(
             .single()
             .execute()
         )
-        return res.data
+        return cast(dict[str, Any] | None, res.data)
     except Exception as e:
         err_msg = str(e)
         logger.error(
@@ -307,7 +305,7 @@ def save_otp_record(
         res = admin_client.table(
             "email_verifications").insert(record).execute()
         if res.data and len(res.data) > 0:
-            return res.data[0]
+            return cast(dict[str, Any], res.data[0])
     except Exception as e:
         logger.warning(
             f"Notice: Supabase email_verifications insert notice: {
@@ -338,7 +336,7 @@ def get_active_otp_record(
             .execute()
         )
         if res.data and len(res.data) > 0:
-            return res.data[0]
+            return cast(dict[str, Any], res.data[0])
     except Exception as e:
         logger.debug(
             f"Querying email_verifications table notice: {

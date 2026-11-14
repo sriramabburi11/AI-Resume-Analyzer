@@ -1,6 +1,5 @@
 import re
 from typing import Any
-# pyrefly: ignore[missing-import]
 import pymupdf as fitz  # PyMuPDF
 
 
@@ -33,7 +32,7 @@ def extract_resume_text(pdf_bytes: bytes) -> dict[str, Any]:
         for page_num in range(page_count):
             page = doc.load_page(page_num)
             text = page.get_text("text")
-            full_text_pages.append(text)
+            full_text_pages.append(str(text) if not isinstance(text, str) else text)
 
             # Count images
             images = page.get_images()
@@ -50,21 +49,21 @@ def extract_resume_text(pdf_bytes: bytes) -> dict[str, Any]:
             # Sort blocks vertically
             # If we see overlapping y-coordinates with significantly different
             # x-coordinates, multi-column is likely
-            x_ranges = []
+            x_ranges: list[tuple[float, float, float, float]] = []
             for b in blocks:
                 # b is (x0, y0, x1, y1, "text", block_no, block_type)
-                if len(b) >= 5 and b[4].strip():
-                    x0, y0, x1, y1 = b[0], b[1], b[2], b[3]
+                if len(b) >= 5 and str(b[4]).strip():
+                    x0, y0, x1, y1 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
                     x_ranges.append((x0, x1, y0, y1))
 
             # Simple multi-column heuristic: check if there are blocks on left half (x1 < page_width*0.55)
             # AND blocks on right half (x0 > page_width*0.45) at similar y ranges.
             rect = page.rect
-            page_width = rect.width
+            page_width = float(rect.width)
             mid_point = page_width / 2.0
 
-            left_blocks = [b for b in x_ranges if b[1] <= mid_point + 20]
-            right_blocks = [b for b in x_ranges if b[0] >= mid_point - 20]
+            left_blocks = [br for br in x_ranges if br[1] <= mid_point + 20]
+            right_blocks = [br for br in x_ranges if br[0] >= mid_point - 20]
             if len(left_blocks) >= 2 and len(right_blocks) >= 2:
                 multi_column_detected = True
 

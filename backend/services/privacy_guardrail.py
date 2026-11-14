@@ -1,6 +1,5 @@
 import logging
 import re
-# pyrefly: ignore[missing-import]
 import pymupdf as fitz
 
 logger = logging.getLogger("privacy_guardrail")
@@ -383,7 +382,7 @@ def sanitize_log_message(msg: str) -> str:
     if not msg:
         return ""
 
-    sanitized = str(msg)
+    sanitized = msg
     # Mask emails
     sanitized = EMAIL_PATTERN.sub("[EMAIL_MASKED]", sanitized)
     # Mask phone numbers

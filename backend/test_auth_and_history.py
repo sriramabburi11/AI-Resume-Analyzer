@@ -21,26 +21,33 @@ This file is preserved for historical reference only.
 ===================================================================================
 """
 
+import importlib
 import os
 import sys
 import unittest
 
 # ---------------------------------------------------------------------------------
 # Guard: Skip all tests because the legacy modules do not exist in the current
-# Supabase-based project.  Running `pytest` will collect this file and report
+# Supabase-based project. Running `pytest` will collect this file and report
 # the tests as skipped rather than erroring out.
 # ---------------------------------------------------------------------------------
 LEGACY_MODULES_AVAILABLE = False
+Base = SessionLocal = engine = None
+PasswordResetToken = ResumeAnalysis = User = None
+
 try:
     sys.path.insert(0, os.path.dirname(__file__))
-    # pyrefly: ignore[missing-import]
-    from database import Base, SessionLocal, engine
-    # pyrefly: ignore[missing-import]
-    from models import PasswordResetToken, ResumeAnalysis, User
+    _db = importlib.import_module("database")
+    _models = importlib.import_module("models")
+    Base = getattr(_db, "Base", None)
+    SessionLocal = getattr(_db, "SessionLocal", None)
+    engine = getattr(_db, "engine", None)
+    PasswordResetToken = getattr(_models, "PasswordResetToken", None)
+    ResumeAnalysis = getattr(_models, "ResumeAnalysis", None)
+    User = getattr(_models, "User", None)
     LEGACY_MODULES_AVAILABLE = True
 except ImportError:
-    Base = SessionLocal = engine = None
-    PasswordResetToken = ResumeAnalysis = User = None
+    pass
 
 SKIP_REASON = (
     "Skipped: Legacy test requires 'database', 'models', and 'security' modules "
