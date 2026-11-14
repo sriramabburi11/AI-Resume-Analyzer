@@ -1,0 +1,12 @@
+# Python virtual environments & bytecode
+backend/venv/
+**/venv/
+**/*.pyc
+**/__pycache__/
+.pytest_cache/
+
+# Test files and local assets
+backend/test_*.py
+sample_resume.pdf
+.git/
+.github/

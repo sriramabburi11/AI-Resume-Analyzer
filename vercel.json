@@ -1,6 +1,12 @@
 {
   "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/index.py": {
+      "includeFiles": "backend/**",
+      "excludeFiles": "{frontend/**,node_modules/**,**/node_modules/**,**/venv/**,backend/venv/**,backend/test_*.py,sample_resume.pdf,**/*.pyc}"
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
