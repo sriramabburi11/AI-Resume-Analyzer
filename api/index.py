@@ -1,9 +1,13 @@
 import os
 import sys
 
-# Ensure backend directory is in python module search path
-backend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backend")
-if backend_path not in sys.path:
-    sys.path.insert(0, backend_path)
+# Ensure backend and root directories are in python module search path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+backend_path = os.path.join(root_dir, "backend")
+
+for path in (backend_path, root_dir, current_dir):
+    if path and path not in sys.path:
+        sys.path.insert(0, path)
 
 from main import app

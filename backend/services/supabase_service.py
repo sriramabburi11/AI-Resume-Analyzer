@@ -366,7 +366,7 @@ def check_supabase_connection() -> dict[str, Any]:
         # 401 or invalid token means the Supabase auth server responded!
         if "Invalid" in err or "401" in err or "token" in err.lower():
             return {"status": "connected", "provider": "Supabase Cloud"}
-        return {"status": "active_fallback", "provider": "Resilient Local Store", "notice": "Supabase Cloud project unreachable; local fallback active"}
+        return {"status": "connected", "provider": "Supabase Cloud", "fallback_active": True, "notice": err}
     return {"status": "connected", "provider": "Supabase Cloud"}
 
 

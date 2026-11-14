@@ -3,7 +3,6 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-import uvicorn
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from schemas.resume_schema import (
@@ -70,6 +69,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def ensure_api_prefix(request, call_next):
+    # Support both /api/... and /... routes on serverless deployments
+    path = request.scope.get("path", "")
+    if not path.startswith("/api") and not path.startswith("/docs") and not path.startswith("/openapi.json"):
+        request.scope["path"] = "/api" + path
+    return await call_next(request)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
@@ -817,6 +825,7 @@ def delete_history_item(
 
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

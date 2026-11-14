@@ -35,8 +35,14 @@ export async function registerUser({ fullName, email, password }) {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Registration failed. Please try again.');
+    let errorDetail = '';
+    try {
+      const errorData = await response.json();
+      errorDetail = errorData.detail || errorData.message || '';
+    } catch {
+      // response body was not json
+    }
+    throw new Error(errorDetail || 'Registration failed. Please try again.');
   }
 
   return await response.json();
